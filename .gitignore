@@ -1,0 +1,13 @@
+Python
+pycache/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+Service account key file
+sheets_service.json
+
+Environment
+.env
+venv/

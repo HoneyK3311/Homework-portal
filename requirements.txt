@@ -1,0 +1,6 @@
+Flask
+gspread
+pandas
+google-auth-oauthlib
+gunicorn
+requests
