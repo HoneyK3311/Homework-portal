@@ -172,7 +172,7 @@
                     allSubmissions = data.submissions;
                     allAssignments = data.assignments;
                     
-                    if (classFilter.options.length <= 1) { // 필터가 초기화되지 않았을 때만 채움
+                    if (classFilter.options.length <= 1) {
                         initializeFilters();
                     }
                     renderTable();
@@ -202,22 +202,19 @@
                 });
             }
 
-            // ✨ 수정된 부분: 상태 표시 로직 수정
             function getStatusBadge(submission) {
                 const teacherStatus = submission['교사확인상태'] || '미확인';
-                
                 const colors = {
                     "확인완료": "bg-green-100 text-green-800",
                     "반려": "bg-red-100 text-red-800",
                     "미확인": "bg-gray-100 text-gray-800",
                 };
-                return `<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${colors[teacherStatus] || colors['미확인']}">${teacherStatus}</span>`;
+                return `<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${colors[teacherStatus]}">${teacherStatus}</span>`;
             }
 
             function renderTable() {
                 tableBody.innerHTML = '';
                 
-                // 필터링 로직
                 const classVal = classFilter.value;
                 const assignmentVal = assignmentFilter.value;
                 const statusVal = statusFilter.value;
@@ -225,13 +222,7 @@
 
                 let filteredSubmissions = allSubmissions.filter(s => {
                     const teacherStatus = s['교사확인상태'] || '미확인';
-                    let isVisible = true;
-
-                    if (statusVal === 'all') {
-                        isVisible = teacherStatus !== '반려';
-                    } else {
-                        isVisible = teacherStatus === statusVal;
-                    }
+                    let isVisible = (statusVal === 'all') ? (teacherStatus !== '반려') : (teacherStatus === statusVal);
 
                     const studentName = s['이름을 입력해주세요. (띄어쓰기 금지)'] || '';
                     const className = s['클래스를 선택해주세요.'] || '';
@@ -254,6 +245,8 @@
                     const className = s['클래스를 선택해주세요.'] || '클래스 없음';
                     const assignmentName = s['과제 번호를 선택해주세요. (반드시 확인요망)'] || '과제명 없음';
                     const submissionDate = s['제출일시_KST_str'] || '-';
+                    const teacherStatus = s['교사확인상태'] || '미확인';
+                    const buttonText = teacherStatus === '확인완료' ? '수정하기' : '채점하기';
 
                     row.innerHTML = `
                         <td class="px-6 py-4 whitespace-nowrap"><div class="text-sm font-medium text-gray-900">${studentName}</div></td>
@@ -262,14 +255,13 @@
                         <td class="px-6 py-4 whitespace-nowrap"><div class="text-sm text-gray-500">${submissionDate}</div></td>
                         <td class="px-6 py-4 whitespace-nowrap text-center">${getStatusBadge(s)}</td>
                         <td class="px-6 py-4 whitespace-nowrap text-center text-sm font-medium">
-                            <button data-id="${s['Submission ID']}" class="detail-btn text-indigo-600 hover:text-indigo-900">채점하기</button>
+                            <button data-id="${s['Submission ID']}" class="detail-btn text-indigo-600 hover:text-indigo-900">${buttonText}</button>
                         </td>
                     `;
                     tableBody.appendChild(row);
                 });
             }
             
-            // --- 이벤트 리스너 ---
             [classFilter, assignmentFilter, statusFilter, studentSearch].forEach(el => {
                 el.addEventListener('input', renderTable);
             });
@@ -280,7 +272,7 @@
                 }
             });
 
-            function openGradingModal(submissionId) {
+            async function openGradingModal(submissionId) {
                 currentSubmission = allSubmissions.find(s => s['Submission ID'] === submissionId);
                 if (!currentSubmission) return alert('해당 제출 정보를 찾을 수 없습니다.');
 
@@ -316,6 +308,25 @@
                     });
                 } else {
                     problemList.innerHTML = '<p class="text-gray-500 text-sm flex items-center justify-center h-full">해당 과제의 문항 정보가 없습니다.</p>';
+                }
+
+                // ✨ 수정 모드일 경우, 기존 데이터 불러오기
+                if (currentSubmission['교사확인상태'] === '확인완료') {
+                    try {
+                        const res = await fetch(`/api/get_result_details?id=${submissionId}`);
+                        if (!res.ok) throw new Error('기존 채점 결과를 불러오는데 실패했습니다.');
+                        const details = await res.json();
+                        
+                        feedbackNotes.value = details.memo || '';
+                        const wrongProblems = details.wrongProblemTexts.split(',').map(s => s.trim());
+                        problemList.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                            if (wrongProblems.includes(cb.value)) {
+                                cb.checked = true;
+                            }
+                        });
+                    } catch (error) {
+                        alert(error.message);
+                    }
                 }
 
                 detailModal.classList.remove('hidden');
@@ -408,7 +419,7 @@
                     if (!response.ok) throw new Error(result.message);
                     alert(result.message);
                     closeGradingModal();
-                    fetchDataAndRender(); // 데이터 새로고침
+                    fetchDataAndRender();
                 } catch (error) {
                     alert(`오류 발생: ${error.message}`);
                 } finally {
@@ -458,7 +469,6 @@
                 if (e.target === detailModal) closeGradingModal();
             });
             
-            // 최초 데이터 로딩
             fetchDataAndRender();
         });
     </script>

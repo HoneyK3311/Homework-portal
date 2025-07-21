@@ -1,5 +1,6 @@
 # Homework_Portal.py
-# Render 배포 시 백그라운드 작업기가 안정적으로 실행되도록 수정한 최종 버전입니다.
+# Render 배포용 최종 버전입니다.
+# '확인완료'된 과제를 수정하는 기능이 추가되었습니다.
 
 import gspread
 import pandas as pd
@@ -35,10 +36,13 @@ def authenticate_gsheets():
     try:
         creds_json_str = os.environ.get('GOOGLE_CREDENTIALS_JSON')
         if not creds_json_str:
-            raise ValueError("GOOGLE_CREDENTIALS_JSON 환경 변수가 설정되지 않았습니다.")
-        creds_info = json.loads(creds_json_str)
-        creds = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
-        print("✅ Render 환경 변수에서 인증 성공")
+            # 로컬 테스트용 fallback
+            print("⚠️ GOOGLE_CREDENTIALS_JSON 환경 변수를 찾을 수 없습니다. 로컬 파일로 인증을 시도합니다.")
+            creds = Credentials.from_service_account_file('sheets_service.json', scopes=SCOPES)
+        else:
+            creds_info = json.loads(creds_json_str)
+            creds = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
+            print("✅ Render 환경 변수에서 인증 성공")
         return gspread.authorize(creds)
     except Exception as e:
         print(f"❌ 구글 시트 인증 중 오류 발생: {e}")
@@ -60,20 +64,13 @@ def get_sheet_as_df(worksheet):
 
 def send_sms_aligo(phone_number, message):
     """알리고 API를 사용하여 SMS를 발송합니다."""
-    if not all([ALIGO_API_KEY, ALIGO_USER_ID, SENDER_PHONE_NUMBER]):
+    if not all([ALIGO_API_KEY, ALIGO_USER_ID, SENDER_PHONE_NUMBER]) or "여기에" in ALIGO_API_KEY:
         print("⚠️ 알리고 API 환경 변수가 설정되지 않아 발송을 건너뜁니다.")
         return
 
     try:
         url = "https://apis.aligo.in/send/"
-        payload = {
-            'key': ALIGO_API_KEY,
-            'user_id': ALIGO_USER_ID,
-            'sender': SENDER_PHONE_NUMBER,
-            'receiver': phone_number,
-            'msg': message,
-            'msg_type': 'SMS'
-        }
+        payload = { 'key': ALIGO_API_KEY, 'user_id': ALIGO_USER_ID, 'sender': SENDER_PHONE_NUMBER, 'receiver': phone_number, 'msg': message, 'msg_type': 'SMS' }
         response = requests.post(url, data=payload)
         result = response.json()
         if result.get("result_code") == "1":
@@ -171,6 +168,34 @@ def get_data():
     }
     return jsonify(result)
 
+# ✨ 새로운 API: 기존 채점 결과 불러오기
+@app.route('/api/get_result_details')
+def get_result_details():
+    submission_id = request.args.get('id')
+    if not submission_id:
+        return jsonify({"error": "Submission ID가 필요합니다."}), 400
+    
+    gc = authenticate_gsheets()
+    if not gc: return jsonify({"error": "Google Sheets 인증 실패"}), 500
+
+    try:
+        target_sheet = gc.open_by_key(TARGET_SHEET_ID)
+        worksheet = target_sheet.worksheet("과제제출현황")
+        
+        cell = worksheet.find(submission_id, in_column=10) # 과제ID는 J열(10번째)
+        if not cell:
+            return jsonify({"error": "채점 기록을 찾을 수 없습니다."}), 404
+        
+        row_data = worksheet.row_values(cell.row)
+        result = {
+            "wrongProblemTexts": row_data[6], # 오답문항
+            "memo": row_data[7] # 메모
+        }
+        return jsonify(result)
+    except Exception as e:
+        print(f"❌ 채점 기록 조회 중 오류: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/api/update_status', methods=['POST'])
 def update_status():
     data = request.json
@@ -182,32 +207,47 @@ def update_status():
         
         source_sheet = gc.open_by_url(SOURCE_SHEET_URL)
         source_worksheet = source_sheet.worksheet(SOURCE_WORKSHEET_NAME)
-        cell = source_worksheet.find(payload.get('submissionId'))
-        if not cell: return jsonify({"success": False, "message": "원본 시트에서 해당 과제를 찾을 수 없습니다."}), 404
+        cell_source = source_worksheet.find(payload.get('submissionId'))
+        if not cell_source: return jsonify({"success": False, "message": "원본 시트에서 해당 과제를 찾을 수 없습니다."}), 404
         
-        target_row = cell.row
+        target_row_source = cell_source.row
         new_status = "확인완료" if action == 'confirm' else "반려"
-        source_worksheet.update_cell(target_row, 9, new_status)
-
+        
         target_sheet = gc.open_by_key(TARGET_SHEET_ID)
+        
         if action == 'confirm':
             worksheet = target_sheet.worksheet("과제제출현황")
-            new_row = [
+            cell_target = worksheet.find(payload.get('submissionId'), in_column=10)
+            
+            new_row_data = [
                 payload.get('className'), payload.get('studentName'), payload.get('assignmentName'),
                 payload.get('submissionStatus'), payload.get('totalProblems'), payload.get('wrongProblemCount'),
                 ", ".join(payload.get('wrongProblemTexts', [])),
                 payload.get('memo'), datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 payload.get('submissionId')
             ]
-            worksheet.append_row(new_row)
+
+            if cell_target:
+                worksheet.update(f'A{cell_target.row}:J{cell_target.row}', [new_row_data])
+                message = "채점 결과가 수정되었습니다."
+            else:
+                worksheet.append_row(new_row_data)
+                message = "채점 결과가 저장되었습니다."
+
         elif action == 'reject':
-            worksheet = target_sheet.worksheet("과제반려현황")
+            confirm_worksheet = target_sheet.worksheet("과제제출현황")
+            cell_to_delete = confirm_worksheet.find(payload.get('submissionId'), in_column=10)
+            if cell_to_delete:
+                confirm_worksheet.delete_rows(cell_to_delete.row)
+
+            reject_worksheet = target_sheet.worksheet("과제반려현황")
             new_row = [
                 payload.get('className'), payload.get('studentName'), payload.get('assignmentName'),
                 payload.get('reason'), datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 payload.get('submissionId')
             ]
-            worksheet.append_row(new_row)
+            reject_worksheet.append_row(new_row)
+            message = "반려 정보가 저장되었습니다."
 
             student_db_sheet = gc.open_by_key(STUDENT_DB_SHEET_ID)
             roster_worksheet = student_db_sheet.worksheet("(통합) 학생DB")
@@ -216,9 +256,12 @@ def update_status():
             if not student_info.empty:
                 phone_number = str(student_info.iloc[0]['학생전화'])
                 if phone_number:
-                    message = f"[김한이수학] {payload.get('assignmentName')}이(가) 반려됨ㅠ ({payload.get('reason')})"
-                    send_sms_aligo(phone_number, message)
-        return jsonify({"success": True, "message": "상태 업데이트 및 기록이 완료되었습니다."})
+                    sms_message = f"[김한이수학] {payload.get('assignmentName')}이(가) 반려됨ㅠ ({payload.get('reason')})"
+                    send_sms_aligo(phone_number, sms_message)
+        
+        source_worksheet.update_cell(target_row_source, 9, new_status)
+
+        return jsonify({"success": True, "message": message})
     except Exception as e:
         print(f"❌ 상태 업데이트 중 오류: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
@@ -227,7 +270,7 @@ def update_status():
 def index():
     return render_template('index.html')
 
-# --- ✨ 수정된 부분: 백그라운드 작업 시작 로직 변경 ---
+# --- 서버 실행 및 백그라운드 작업 시작 ---
 worker_thread_started = False
 @app.before_request
 def start_worker_thread():
@@ -240,5 +283,4 @@ def start_worker_thread():
         print("✅ 첫 요청 감지: 백그라운드 작업 스레드를 시작합니다.")
 
 if __name__ == '__main__':
-    # 로컬 테스트 시에는 이 부분이 직접 실행됩니다.
-    app.run(host='0.0.0.0', port=5000)
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
