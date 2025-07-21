@@ -1,6 +1,5 @@
 # Homework_Portal.py
-# Render 배포를 위해 환경 변수에서 인증 정보를 읽어오도록 수정된 최종 버전입니다.
-# 웹 서버, 백그라운드 자동 처리기, 알리고(Aligo) SMS 발송 기능이 모두 포함되어 있습니다.
+# Render 배포 시 백그라운드 작업기가 안정적으로 실행되도록 수정한 최종 버전입니다.
 
 import gspread
 import pandas as pd
@@ -25,9 +24,9 @@ TARGET_SHEET_ID = "1VROqIZ2GmAlQSdw8kZyd_rC6oP_nqTsuVEnWIi0rS24"
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
 
 # --- 알리고(Aligo) API 설정 (Render 환경 변수에서 읽어옴) ---
-ALIGO_API_KEY = os.environ.get("fdqm21jhh1zffm5213uvgze5z85go3px")
-ALIGO_USER_ID = os.environ.get("kr308")
-SENDER_PHONE_NUMBER = os.environ.get("01098159412")
+ALIGO_API_KEY = os.environ.get("ALIGO_API_KEY")
+ALIGO_USER_ID = os.environ.get("ALIGO_USER_ID")
+SENDER_PHONE_NUMBER = os.environ.get("SENDER_PHONE_NUMBER")
 
 # --- 핵심 기능 함수 ---
 
@@ -228,9 +227,13 @@ def update_status():
 def index():
     return render_template('index.html')
 
-# --- 서버 실행 ---
-if __name__ == '__main__':
+# --- 서버 실행 및 백그라운드 작업 시작 ---
+# ✨ 수정된 부분: Gunicorn이 파일을 임포트할 때 이 부분이 실행되어 스레드가 시작됩니다.
+if not os.environ.get('WERKZEUG_RUN_MAIN'): # 로컬 테스트 시 중복 실행 방지
     worker_thread = threading.Thread(target=background_worker_task, daemon=True)
     worker_thread.start()
-    # Render는 PORT 환경 변수를 사용하므로, 이를 반영
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    print("✅ 백그라운드 작업 스레드가 시작되었습니다.")
+
+if __name__ == '__main__':
+    # 이 부분은 이제 로컬에서 직접 python Homework_Portal.py를 실행할 때만 사용됩니다.
+    app.run(host='0.0.0.0', port=5000)
