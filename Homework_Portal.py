@@ -227,13 +227,18 @@ def update_status():
 def index():
     return render_template('index.html')
 
-# --- 서버 실행 및 백그라운드 작업 시작 ---
-# ✨ 수정된 부분: Gunicorn이 파일을 임포트할 때 이 부분이 실행되어 스레드가 시작됩니다.
-if not os.environ.get('WERKZEUG_RUN_MAIN'): # 로컬 테스트 시 중복 실행 방지
-    worker_thread = threading.Thread(target=background_worker_task, daemon=True)
-    worker_thread.start()
-    print("✅ 백그라운드 작업 스레드가 시작되었습니다.")
+# --- ✨ 수정된 부분: 백그라운드 작업 시작 로직 변경 ---
+worker_thread_started = False
+@app.before_request
+def start_worker_thread():
+    """첫 번째 요청이 들어왔을 때 백그라운드 작업을 딱 한 번만 시작합니다."""
+    global worker_thread_started
+    if not worker_thread_started:
+        worker_thread = threading.Thread(target=background_worker_task, daemon=True)
+        worker_thread.start()
+        worker_thread_started = True
+        print("✅ 첫 요청 감지: 백그라운드 작업 스레드를 시작합니다.")
 
 if __name__ == '__main__':
-    # 이 부분은 이제 로컬에서 직접 python Homework_Portal.py를 실행할 때만 사용됩니다.
+    # 로컬 테스트 시에는 이 부분이 직접 실행됩니다.
     app.run(host='0.0.0.0', port=5000)
