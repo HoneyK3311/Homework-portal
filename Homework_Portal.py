@@ -1,10 +1,11 @@
 # Homework_Portal.py
-# 관리자 뷰어 기능이 추가된 최종 버전입니다.
+# Render 배포를 위해 환경 변수에서 인증 정보를 읽어오도록 수정된 최종 버전입니다.
+# 웹 서버, 백그라운드 자동 처리기, 알리고(Aligo) SMS 발송 기능이 모두 포함되어 있습니다.
 
 import gspread
 import pandas as pd
 from google.oauth2.service_account import Credentials
-from datetime import datetime
+from datetime import datetime, timedelta
 import os
 import json
 import requests
@@ -24,23 +25,21 @@ TARGET_SHEET_ID = "1VROqIZ2GmAlQSdw8kZyd_rC6oP_nqTsuVEnWIi0rS24"
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
 
 # --- 알리고(Aligo) API 설정 (Render 환경 변수에서 읽어옴) ---
-ALIGO_API_KEY = os.environ.get("fdqm21jhh1zffm5213uvgze5z85go3px	")
-ALIGO_USER_ID = os.environ.get("kr308")
-SENDER_PHONE_NUMBER = os.environ.get("01098159412")
+ALIGO_API_KEY = os.environ.get("ALIGO_API_KEY")
+ALIGO_USER_ID = os.environ.get("ALIGO_USER_ID")
+SENDER_PHONE_NUMBER = os.environ.get("SENDER_PHONE_NUMBER")
 
 # --- 핵심 기능 함수 ---
 
 def authenticate_gsheets():
-    """Render 환경 변수 또는 로컬 파일에서 인증 정보를 읽어옵니다."""
+    """Render 환경 변수에서 인증 정보를 읽어옵니다."""
     try:
         creds_json_str = os.environ.get('GOOGLE_CREDENTIALS_JSON')
         if not creds_json_str:
-            print("⚠️ GOOGLE_CREDENTIALS_JSON 환경 변수를 찾을 수 없습니다. 로컬 파일로 인증을 시도합니다.")
-            creds = Credentials.from_service_account_file('sheets_service.json', scopes=SCOPES)
-        else:
-            creds_info = json.loads(creds_json_str)
-            creds = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
-            print("✅ Render 환경 변수에서 인증 성공")
+            raise ValueError("GOOGLE_CREDENTIALS_JSON 환경 변수가 설정되지 않았습니다.")
+        creds_info = json.loads(creds_json_str)
+        creds = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
+        print("✅ Render 환경 변수에서 인증 성공")
         return gspread.authorize(creds)
     except Exception as e:
         print(f"❌ 구글 시트 인증 중 오류 발생: {e}")
@@ -62,13 +61,20 @@ def get_sheet_as_df(worksheet):
 
 def send_sms_aligo(phone_number, message):
     """알리고 API를 사용하여 SMS를 발송합니다."""
-    if not all([ALIGO_API_KEY, ALIGO_USER_ID, SENDER_PHONE_NUMBER]) or "여기에" in ALIGO_API_KEY:
+    if not all([ALIGO_API_KEY, ALIGO_USER_ID, SENDER_PHONE_NUMBER]):
         print("⚠️ 알리고 API 환경 변수가 설정되지 않아 발송을 건너뜁니다.")
         return
 
     try:
         url = "https://apis.aligo.in/send/"
-        payload = { 'key': ALIGO_API_KEY, 'user_id': ALIGO_USER_ID, 'sender': SENDER_PHONE_NUMBER, 'receiver': phone_number, 'msg': message, 'msg_type': 'SMS' }
+        payload = {
+            'key': ALIGO_API_KEY,
+            'user_id': ALIGO_USER_ID,
+            'sender': SENDER_PHONE_NUMBER,
+            'receiver': phone_number,
+            'msg': message,
+            'msg_type': 'SMS'
+        }
         response = requests.post(url, data=payload)
         result = response.json()
         if result.get("result_code") == "1":
@@ -169,28 +175,18 @@ def get_data():
 @app.route('/api/get_result_details')
 def get_result_details():
     submission_id = request.args.get('id')
-    print(f"🔍 '{submission_id}'에 대한 채점 기록 조회 시작...")
-    if not submission_id:
-        return jsonify({"error": "Submission ID가 필요합니다."}), 400
-    
+    if not submission_id: return jsonify({"error": "Submission ID가 필요합니다."}), 400
     gc = authenticate_gsheets()
     if not gc: return jsonify({"error": "Google Sheets 인증 실패"}), 500
-
     try:
         target_sheet = gc.open_by_key(TARGET_SHEET_ID)
         worksheet = target_sheet.worksheet("과제제출현황")
-        
-        cell = worksheet.find(submission_id, in_column=10) # 과제ID는 J열(10번째)
-        if not cell:
-            print(f"⚠️ '{submission_id}'에 대한 채점 기록을 찾을 수 없음.")
-            return jsonify({"error": "채점 기록을 찾을 수 없습니다."}), 404
-        
-        print(f"✅ '{submission_id}' 기록 발견: {cell.row}행")
+        cell = worksheet.find(submission_id, in_column=10)
+        if not cell: return jsonify({"error": "채점 기록을 찾을 수 없습니다."}), 404
         row_data = worksheet.row_values(cell.row)
         result = { "wrongProblemTexts": row_data[6], "memo": row_data[7] }
         return jsonify(result)
     except Exception as e:
-        print(f"❌ 채점 기록 조회 중 오류: {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/update_status', methods=['POST'])
@@ -215,7 +211,6 @@ def update_status():
         if action == 'confirm':
             worksheet = target_sheet.worksheet("과제제출현황")
             cell_target = worksheet.find(payload.get('submissionId'), in_column=10)
-            
             new_row_data = [
                 payload.get('className'), payload.get('studentName'), payload.get('assignmentName'),
                 payload.get('submissionStatus'), payload.get('totalProblems'), payload.get('wrongProblemCount'),
@@ -223,20 +218,17 @@ def update_status():
                 payload.get('memo'), datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
                 payload.get('submissionId')
             ]
-
             if cell_target:
                 worksheet.update(f'A{cell_target.row}:J{cell_target.row}', [new_row_data])
                 message = "채점 결과가 수정되었습니다."
             else:
                 worksheet.append_row(new_row_data)
                 message = "채점 결과가 저장되었습니다."
-
         elif action == 'reject':
             confirm_worksheet = target_sheet.worksheet("과제제출현황")
             cell_to_delete = confirm_worksheet.find(payload.get('submissionId'), in_column=10)
             if cell_to_delete:
                 confirm_worksheet.delete_rows(cell_to_delete.row)
-
             reject_worksheet = target_sheet.worksheet("과제반려현황")
             new_row = [
                 payload.get('className'), payload.get('studentName'), payload.get('assignmentName'),
@@ -245,7 +237,6 @@ def update_status():
             ]
             reject_worksheet.append_row(new_row)
             message = "반려 정보가 저장되었습니다."
-
             student_db_sheet = gc.open_by_key(STUDENT_DB_SHEET_ID)
             roster_worksheet = student_db_sheet.worksheet("(통합) 학생DB")
             roster_df = get_sheet_as_df(roster_worksheet)
@@ -257,41 +248,16 @@ def update_status():
                     send_sms_aligo(phone_number, sms_message)
         
         source_worksheet.update_cell(target_row_source, 9, new_status)
-
         return jsonify({"success": True, "message": message})
     except Exception as e:
-        print(f"❌ 상태 업데이트 중 오류: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
-
-# ✨ 새로운 API: 관리자 뷰어 데이터 로딩
-@app.route('/api/archive_data')
-def get_archive_data():
-    gc = authenticate_gsheets()
-    if not gc: return jsonify({"error": "Google Sheets 인증 실패"}), 500
-    try:
-        target_sheet = gc.open_by_key(TARGET_SHEET_ID)
-        confirmed_df = get_sheet_as_df(target_sheet.worksheet("과제제출현황"))
-        rejected_df = get_sheet_as_df(target_sheet.worksheet("과제반려현황"))
-        
-        result = {
-            "confirmed": confirmed_df.to_dict(orient='records'),
-            "rejected": rejected_df.to_dict(orient='records')
-        }
-        return jsonify(result)
-    except Exception as e:
-        print(f"❌ 아카이브 데이터 로딩 중 오류: {e}")
-        return jsonify({"error": str(e)}), 500
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
-# ✨ 새로운 경로: 관리자 뷰어 페이지
-@app.route('/admin')
-def admin_page():
-    return render_template('admin.html')
-
 # --- 서버 실행 및 백그라운드 작업 시작 ---
+# Render가 Gunicorn으로 앱을 실행할 때를 대비한 구조
 worker_thread_started = False
 @app.before_request
 def start_worker_thread():
@@ -304,4 +270,5 @@ def start_worker_thread():
         print("✅ 첫 요청 감지: 백그라운드 작업 스레드를 시작합니다.")
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+    # 로컬에서 직접 python Homework_Portal.py를 실행할 때
+    app.run(host='0.0.0.0', port=5000)

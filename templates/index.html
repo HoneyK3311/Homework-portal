@@ -14,7 +14,7 @@
         .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); display: flex; justify-content: center; align-items: center; z-index: 50; transition: opacity 0.2s ease-in-out; }
         .modal-content { background-color: white; padding: 2rem; border-radius: 0.5rem; width: 90%; max-width: 900px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transform: scale(0.95); transition: transform 0.2s ease-in-out; max-height: 95vh; overflow-y: auto; }
         .modal-backdrop:not(.hidden) .modal-content { transform: scale(1); }
-        .loader { border: 5px solid #f3f3f3; border-top: 5px solid #3498db; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; }
+        .loader { border: 5px solid #f3f3f3; border-top: 5px solid #4f46e5; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .image-carousel-btn { position: absolute; top: 50%; transform: translateY(-50%); background-color: rgba(0,0,0,0.5); color: white; border: none; border-radius: 50%; width: 40px; height: 40px; font-size: 24px; cursor: pointer; display: flex; justify-content: center; align-items: center; z-index: 10; transition: background-color 0.2s; }
         .image-carousel-btn:hover { background-color: rgba(0,0,0,0.8); }
@@ -35,9 +35,11 @@
     </div>
 
     <div id="app" class="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto hidden">
-        <header class="mb-8">
-            <h1 class="text-3xl font-bold text-gray-900">과제 관리 대시보드</h1>
-            <p class="text-gray-600 mt-1">학생들의 과제 제출 현황을 한눈에 파악하고 관리하세요.</p>
+        <header class="mb-8 flex justify-between items-center">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-900">과제 관리 대시보드</h1>
+                <p class="text-gray-600 mt-1">학생들의 과제 제출 현황을 한눈에 파악하고 관리하세요.</p>
+            </div>
         </header>
 
         <!-- 필터 및 검색 섹션 -->
@@ -296,7 +298,6 @@
                 // 문항 목록 렌더링
                 renderProblemList();
 
-                // ✨ 수정 모드일 경우, 기존 데이터 불러오기
                 if (currentSubmission['교사확인상태'] === '확인완료') {
                     feedbackNotes.placeholder = "기존 데이터를 불러오는 중...";
                     problemList.innerHTML = `<div class="col-span-5 text-center text-gray-500">기존 데이터를 불러오는 중...</div>`;
@@ -308,7 +309,6 @@
                         feedbackNotes.value = details.memo || '';
                         const wrongProblems = details.wrongProblemTexts.split(',').map(s => s.trim()).filter(Boolean);
                         
-                        // 문항 목록을 다시 렌더링하고 체크
                         renderProblemList();
                         problemList.querySelectorAll('input[type="checkbox"]').forEach(cb => {
                             if (wrongProblems.includes(cb.value)) {
@@ -317,7 +317,7 @@
                         });
                     } catch (error) {
                         alert(error.message);
-                        renderProblemList(); // 오류 발생 시에도 문항 목록은 다시 보여줌
+                        renderProblemList();
                     } finally {
                         feedbackNotes.placeholder = "반려 시 사유를, 확인 완료 시 메모를 남길 수 있습니다.";
                     }
