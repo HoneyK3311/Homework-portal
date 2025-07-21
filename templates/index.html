@@ -293,10 +293,46 @@
                 resetImageViewerState();
                 updateImageViewer();
 
+                // 문항 목록 렌더링
+                renderProblemList();
+
+                // ✨ 수정 모드일 경우, 기존 데이터 불러오기
+                if (currentSubmission['교사확인상태'] === '확인완료') {
+                    feedbackNotes.placeholder = "기존 데이터를 불러오는 중...";
+                    problemList.innerHTML = `<div class="col-span-5 text-center text-gray-500">기존 데이터를 불러오는 중...</div>`;
+                    try {
+                        const res = await fetch(`/api/get_result_details?id=${submissionId}`);
+                        const details = await res.json();
+                        if (!res.ok) throw new Error(details.error || '기존 채점 결과를 불러오는데 실패했습니다.');
+                        
+                        feedbackNotes.value = details.memo || '';
+                        const wrongProblems = details.wrongProblemTexts.split(',').map(s => s.trim()).filter(Boolean);
+                        
+                        // 문항 목록을 다시 렌더링하고 체크
+                        renderProblemList();
+                        problemList.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+                            if (wrongProblems.includes(cb.value)) {
+                                cb.checked = true;
+                            }
+                        });
+                    } catch (error) {
+                        alert(error.message);
+                        renderProblemList(); // 오류 발생 시에도 문항 목록은 다시 보여줌
+                    } finally {
+                        feedbackNotes.placeholder = "반려 시 사유를, 확인 완료 시 메모를 남길 수 있습니다.";
+                    }
+                }
+
+                detailModal.classList.remove('hidden');
+            }
+
+            function renderProblemList() {
                 problemList.innerHTML = '';
+                const assignmentName = currentSubmission['과제 번호를 선택해주세요. (반드시 확인요망)'];
+                const className = currentSubmission['클래스를 선택해주세요.'];
                 const problems = allAssignments.filter(p => p.과제명 === assignmentName && (p.클래스 === className || !p.클래스));
+
                 if(problems.length > 0) {
-                    problemList.className = 'p-2 border rounded-md bg-gray-50 h-48 overflow-y-auto custom-scrollbar grid grid-cols-5 gap-2';
                     problems.forEach(p => {
                         const problemId = `problem-${p.문항번호}`;
                         const problemDiv = document.createElement('div');
@@ -307,29 +343,8 @@
                         problemList.appendChild(problemDiv);
                     });
                 } else {
-                    problemList.innerHTML = '<p class="text-gray-500 text-sm flex items-center justify-center h-full">해당 과제의 문항 정보가 없습니다.</p>';
+                    problemList.innerHTML = '<p class="text-gray-500 text-sm flex items-center justify-center h-full col-span-5">해당 과제의 문항 정보가 없습니다.</p>';
                 }
-
-                // ✨ 수정 모드일 경우, 기존 데이터 불러오기
-                if (currentSubmission['교사확인상태'] === '확인완료') {
-                    try {
-                        const res = await fetch(`/api/get_result_details?id=${submissionId}`);
-                        if (!res.ok) throw new Error('기존 채점 결과를 불러오는데 실패했습니다.');
-                        const details = await res.json();
-                        
-                        feedbackNotes.value = details.memo || '';
-                        const wrongProblems = details.wrongProblemTexts.split(',').map(s => s.trim());
-                        problemList.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-                            if (wrongProblems.includes(cb.value)) {
-                                cb.checked = true;
-                            }
-                        });
-                    } catch (error) {
-                        alert(error.message);
-                    }
-                }
-
-                detailModal.classList.remove('hidden');
             }
 
             function updateImageViewer() {

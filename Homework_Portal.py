@@ -168,10 +168,10 @@ def get_data():
     }
     return jsonify(result)
 
-# ✨ 새로운 API: 기존 채점 결과 불러오기
 @app.route('/api/get_result_details')
 def get_result_details():
     submission_id = request.args.get('id')
+    print(f"🔍 '{submission_id}'에 대한 채점 기록 조회 시작...")
     if not submission_id:
         return jsonify({"error": "Submission ID가 필요합니다."}), 400
     
@@ -182,15 +182,14 @@ def get_result_details():
         target_sheet = gc.open_by_key(TARGET_SHEET_ID)
         worksheet = target_sheet.worksheet("과제제출현황")
         
-        cell = worksheet.find(submission_id, in_column=10) # 과제ID는 J열(10번째)
+        cell = worksheet.find(submission_id, in_column=10)
         if not cell:
+            print(f"⚠️ '{submission_id}'에 대한 채점 기록을 찾을 수 없음.")
             return jsonify({"error": "채점 기록을 찾을 수 없습니다."}), 404
         
+        print(f"✅ '{submission_id}' 기록 발견: {cell.row}행")
         row_data = worksheet.row_values(cell.row)
-        result = {
-            "wrongProblemTexts": row_data[6], # 오답문항
-            "memo": row_data[7] # 메모
-        }
+        result = { "wrongProblemTexts": row_data[6], "memo": row_data[7] }
         return jsonify(result)
     except Exception as e:
         print(f"❌ 채점 기록 조회 중 오류: {e}")
