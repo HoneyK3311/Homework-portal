@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>관리자 뷰어</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Noto Sans KR', sans-serif; }
+        .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background-color: #f1f1f1; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #888; border-radius: 10px; }
+        .tab-button { transition: all 0.2s ease-in-out; }
+        .tab-button.active { border-color: #4f46e5; color: #4f46e5; background-color: #eef2ff; }
+        .loader { border: 5px solid #f3f3f3; border-top: 5px solid #4f46e5; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+    <div id="loading-indicator" class="fixed inset-0 bg-white bg-opacity-75 flex flex-col justify-center items-center z-50">
+        <div class="loader"></div>
+        <p class="mt-4 text-lg font-semibold text-gray-700">관리자 데이터를 불러오는 중입니다...</p>
+    </div>
+
+    <div id="app" class="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto hidden">
+        <header class="mb-8 flex justify-between items-center">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-900">통합 관리자 뷰어</h1>
+                <p class="text-gray-600 mt-1">'학생데이터기록함'의 모든 이력을 조회하고 관리합니다.</p>
+            </div>
+            <a href="/" class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors">
+                채점 대시보드로 가기 &rarr;
+            </a>
+        </header>
+
+        <!-- 탭 메뉴 -->
+        <div class="mb-6">
+            <div class="border-b border-gray-200">
+                <nav class="-mb-px flex space-x-8" aria-label="Tabs">
+                    <button id="tab-confirmed" type="button" class="tab-button active whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">
+                        채점 완료 기록
+                    </button>
+                    <button id="tab-rejected" type="button" class="tab-button whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm text-gray-500 hover:text-gray-700 hover:border-gray-300">
+                        반려 기록
+                    </button>
+                </nav>
+            </div>
+        </div>
+
+        <!-- 검색 필터 -->
+        <div class="bg-white p-4 rounded-lg shadow-md mb-6">
+            <input type="text" id="search-input" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500" placeholder="학생 이름, 클래스, 과제명 등으로 검색...">
+        </div>
+
+        <!-- 채점 완료 기록 테이블 -->
+        <div id="confirmed-view">
+            <h2 class="text-xl font-semibold mb-4">채점 완료 기록</h2>
+            <div class="bg-white rounded-lg shadow-md overflow-hidden">
+                <div class="overflow-x-auto custom-scrollbar">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">클래스</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">이름</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">과제명</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">오답 문항</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">메모</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">확인 시간</th>
+                            </tr>
+                        </thead>
+                        <tbody id="confirmed-table-body" class="bg-white divide-y divide-gray-200"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 반려 기록 테이블 -->
+        <div id="rejected-view" class="hidden">
+            <h2 class="text-xl font-semibold mb-4">반려 기록</h2>
+            <div class="bg-white rounded-lg shadow-md overflow-hidden">
+                <div class="overflow-x-auto custom-scrollbar">
+                    <table class="min-w-full divide-y divide-gray-200">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">클래스</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">이름</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">과제명</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">반려 사유</th>
+                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">반려 시간</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rejected-table-body" class="bg-white divide-y divide-gray-200"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', async function () {
+            // --- 전역 변수 ---
+            let allConfirmed = [];
+            let allRejected = [];
+
+            // --- DOM 요소 ---
+            const loadingIndicator = document.getElementById('loading-indicator');
+            const appContainer = document.getElementById('app');
+            const tabConfirmed = document.getElementById('tab-confirmed');
+            const tabRejected = document.getElementById('tab-rejected');
+            const confirmedView = document.getElementById('confirmed-view');
+            const rejectedView = document.getElementById('rejected-view');
+            const confirmedTableBody = document.getElementById('confirmed-table-body');
+            const rejectedTableBody = document.getElementById('rejected-table-body');
+            const searchInput = document.getElementById('search-input');
+
+            // --- 데이터 로딩 ---
+            try {
+                const response = await fetch('/api/archive_data');
+                if (!response.ok) throw new Error(`서버 오류: ${response.status}`);
+                const data = await response.json();
+                allConfirmed = data.confirmed;
+                allRejected = data.rejected;
+                renderTables();
+            } catch (error) {
+                loadingIndicator.innerHTML = `<p class="text-red-500 font-bold">데이터 로딩 실패!</p><p class="mt-2">${error.message}</p>`;
+            } finally {
+                loadingIndicator.classList.add('hidden');
+                appContainer.classList.remove('hidden');
+            }
+
+            // --- 탭 전환 로직 ---
+            tabConfirmed.addEventListener('click', () => switchTab('confirmed'));
+            tabRejected.addEventListener('click', () => switchTab('rejected'));
+            searchInput.addEventListener('input', renderTables);
+
+            function switchTab(tabName) {
+                if (tabName === 'confirmed') {
+                    tabConfirmed.classList.add('active');
+                    tabRejected.classList.remove('active');
+                    confirmedView.classList.remove('hidden');
+                    rejectedView.classList.add('hidden');
+                } else {
+                    tabRejected.classList.add('active');
+                    tabConfirmed.classList.remove('active');
+                    rejectedView.classList.remove('hidden');
+                    confirmedView.classList.add('hidden');
+                }
+                searchInput.value = ''; // 탭 전환 시 검색어 초기화
+                renderTables();
+            }
+
+            // --- 테이블 렌더링 ---
+            function renderTables() {
+                renderConfirmedTable();
+                renderRejectedTable();
+            }
+
+            function renderConfirmedTable() {
+                const searchTerm = searchInput.value.toLowerCase();
+                const filtered = allConfirmed.filter(item => 
+                    Object.values(item).some(val => String(val).toLowerCase().includes(searchTerm))
+                );
+
+                confirmedTableBody.innerHTML = '';
+                if (filtered.length === 0) {
+                    confirmedTableBody.innerHTML = `<tr><td colspan="6" class="text-center py-10 text-gray-500">표시할 데이터가 없습니다.</td></tr>`;
+                    return;
+                }
+                filtered.forEach(item => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${item['클래스']}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${item['이름']}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${item['과제명']}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-red-600">${item['오답문항'] || '-'}</td>
+                        <td class="px-6 py-4 text-sm text-gray-500">${item['메모'] || '-'}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${item['확인시간']}</td>
+                    `;
+                    confirmedTableBody.appendChild(row);
+                });
+            }
+
+            function renderRejectedTable() {
+                const searchTerm = searchInput.value.toLowerCase();
+                const filtered = allRejected.filter(item => 
+                    Object.values(item).some(val => String(val).toLowerCase().includes(searchTerm))
+                );
+
+                rejectedTableBody.innerHTML = '';
+                if (filtered.length === 0) {
+                    rejectedTableBody.innerHTML = `<tr><td colspan="5" class="text-center py-10 text-gray-500">표시할 데이터가 없습니다.</td></tr>`;
+                    return;
+                }
+                filtered.forEach(item => {
+                    const row = document.createElement('tr');
+                    row.innerHTML = `
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${item['클래스']}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${item['이름']}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${item['과제명']}</td>
+                        <td class="px-6 py-4 text-sm text-gray-500">${item['반려사유']}</td>
+                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${item['반려시간']}</td>
+                    `;
+                    rejectedTableBody.appendChild(row);
+                });
+            }
+        });
+    </script>
+</body>
+</html>

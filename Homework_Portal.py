@@ -1,6 +1,5 @@
 # Homework_Portal.py
-# Render 배포용 최종 버전입니다.
-# '확인완료'된 과제를 수정하는 기능이 추가되었습니다.
+# 관리자 뷰어 기능이 추가된 최종 버전입니다.
 
 import gspread
 import pandas as pd
@@ -25,18 +24,17 @@ TARGET_SHEET_ID = "1VROqIZ2GmAlQSdw8kZyd_rC6oP_nqTsuVEnWIi0rS24"
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
 
 # --- 알리고(Aligo) API 설정 (Render 환경 변수에서 읽어옴) ---
-ALIGO_API_KEY = os.environ.get("ALIGO_API_KEY")
-ALIGO_USER_ID = os.environ.get("ALIGO_USER_ID")
-SENDER_PHONE_NUMBER = os.environ.get("SENDER_PHONE_NUMBER")
+ALIGO_API_KEY = os.environ.get("fdqm21jhh1zffm5213uvgze5z85go3px	")
+ALIGO_USER_ID = os.environ.get("kr308")
+SENDER_PHONE_NUMBER = os.environ.get("01098159412")
 
 # --- 핵심 기능 함수 ---
 
 def authenticate_gsheets():
-    """Render 환경 변수에서 인증 정보를 읽어옵니다."""
+    """Render 환경 변수 또는 로컬 파일에서 인증 정보를 읽어옵니다."""
     try:
         creds_json_str = os.environ.get('GOOGLE_CREDENTIALS_JSON')
         if not creds_json_str:
-            # 로컬 테스트용 fallback
             print("⚠️ GOOGLE_CREDENTIALS_JSON 환경 변수를 찾을 수 없습니다. 로컬 파일로 인증을 시도합니다.")
             creds = Credentials.from_service_account_file('sheets_service.json', scopes=SCOPES)
         else:
@@ -182,7 +180,7 @@ def get_result_details():
         target_sheet = gc.open_by_key(TARGET_SHEET_ID)
         worksheet = target_sheet.worksheet("과제제출현황")
         
-        cell = worksheet.find(submission_id, in_column=10)
+        cell = worksheet.find(submission_id, in_column=10) # 과제ID는 J열(10번째)
         if not cell:
             print(f"⚠️ '{submission_id}'에 대한 채점 기록을 찾을 수 없음.")
             return jsonify({"error": "채점 기록을 찾을 수 없습니다."}), 404
@@ -265,9 +263,33 @@ def update_status():
         print(f"❌ 상태 업데이트 중 오류: {e}")
         return jsonify({"success": False, "message": str(e)}), 500
 
+# ✨ 새로운 API: 관리자 뷰어 데이터 로딩
+@app.route('/api/archive_data')
+def get_archive_data():
+    gc = authenticate_gsheets()
+    if not gc: return jsonify({"error": "Google Sheets 인증 실패"}), 500
+    try:
+        target_sheet = gc.open_by_key(TARGET_SHEET_ID)
+        confirmed_df = get_sheet_as_df(target_sheet.worksheet("과제제출현황"))
+        rejected_df = get_sheet_as_df(target_sheet.worksheet("과제반려현황"))
+        
+        result = {
+            "confirmed": confirmed_df.to_dict(orient='records'),
+            "rejected": rejected_df.to_dict(orient='records')
+        }
+        return jsonify(result)
+    except Exception as e:
+        print(f"❌ 아카이브 데이터 로딩 중 오류: {e}")
+        return jsonify({"error": str(e)}), 500
+
 @app.route('/')
 def index():
     return render_template('index.html')
+
+# ✨ 새로운 경로: 관리자 뷰어 페이지
+@app.route('/admin')
+def admin_page():
+    return render_template('admin.html')
 
 # --- 서버 실행 및 백그라운드 작업 시작 ---
 worker_thread_started = False
