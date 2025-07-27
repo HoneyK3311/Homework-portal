@@ -4,3 +4,4 @@ pandas
 google-auth-oauthlib
 gunicorn
 requests
+oauth2client
