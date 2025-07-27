@@ -195,8 +195,16 @@ def run_worker():
             print(f"🚨 [Worker/미제출알림] 작업 중 오류 발생: {e}\n")
 
 def background_worker_task():
+    """백그라운드에서 run_worker 함수를 주기적으로 실행하는 함수 (안정성 강화)"""
+    print("✅ 백그라운드 작업 루프를 시작합니다.")
     while True:
-        run_worker()
+        try:
+            run_worker()
+        except Exception as e:
+            # run_worker 함수 자체에서 심각한 오류가 발생해도 루프는 계속됩니다.
+            print(f"🚨🚨 [CRITICAL] 백그라운드 스레드에 치명적인 오류가 발생했습니다: {e}")
+            print("    -> 15초 후 작업을 재시도합니다.")
+        
         thread_time.sleep(15)
 
 # --- 페이지 렌더링 ---
