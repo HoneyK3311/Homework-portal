@@ -1,6 +1,7 @@
 import gspread
 import pandas as pd
-from google.oauth2.service_account import Credentials
+# 기존 인증 방식에 필요한 라이브러리
+from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, timedelta, time
 import os
 import json
@@ -49,7 +50,8 @@ STAFF_CREDENTIALS = {
 
 # --- 핵심 기능 함수 ---
 def authenticate_gsheets():
-    creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+    """구글 시트 인증 (기존 oauth2client 방식)"""
+    creds = ServiceAccountCredentials.from_json_keyfile_name(SERVICE_ACCOUNT_FILE, SCOPES)
     return gspread.authorize(creds)
 
 def get_sheet_as_df(worksheet):
