@@ -528,13 +528,18 @@ def staff_logout():
     session.pop('user_id', None)
     return redirect(url_for('staff_login_page'))
 
+
+
+# ----------------------------------------------------------------
+# --- 백그라운드 작업 시작 (Gunicorn이 인식하도록 전역 범위에 위치) ---
+# ----------------------------------------------------------------
+worker_thread = threading.Thread(target=background_worker_task, daemon=True)
+worker_thread.start()
+print("Background worker thread started.")
+
+# ----------------------------------------------------------------
+# --- 서버 실행 (로컬 테스트 전용) ---
+# ----------------------------------------------------------------
 if __name__ == '__main__':
-    # 백그라운드 워커 스레드 시작
-    worker_thread = threading.Thread(target=background_worker_task, daemon=True)
-    worker_thread.start()
-    
-    # Render 배포 환경에서는 Gunicorn이 이 파일을 직접 실행하므로,
-    # app.run()은 로컬 테스트 시에만 사용됩니다.
-    # Render는 PORT 환경 변수를 동적으로 할당합니다.
     port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    app.run(host='0.0.0.0', port=port, debug=True, use_reloader=False)
