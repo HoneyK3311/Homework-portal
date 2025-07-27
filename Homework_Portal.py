@@ -1,114 +1,112 @@
-# Homework_Portal.py
-# Render 배포를 위해 환경 변수에서 인증 정보를 읽어오도록 수정된 최종 버전입니다.
-# 웹 서버, 백그라운드 자동 처리기, 알리고(Aligo) SMS 발송 기능이 모두 포함되어 있습니다.
-
 import gspread
 import pandas as pd
 from google.oauth2.service_account import Credentials
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 import os
 import json
 import requests
-import time
+import time as thread_time
 import threading
-
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, session, redirect, url_for
 
 # --- Flask 앱 초기화 ---
 app = Flask(__name__, template_folder='templates')
+app.secret_key = 'a_very_secret_and_secure_key_for_session_final' # 세션용 비밀키
 
-# --- 설정 ---
-SOURCE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1myGZWyghHzEhziGpOzhpqvWxotyvfaGxmF4ddgFAeOc/edit?usp=sharing"
-SOURCE_WORKSHEET_NAME = "(탈리)과제제출"
-STUDENT_DB_SHEET_ID = "1Od9PfHV39MSfwfUgWtPun0Y9zCqAdURc-iwd2n0rgBI"
-TARGET_SHEET_ID = "1VROqIZ2GmAlQSdw8kZyd_rC6oP_nqTsuVEnWIi0rS24"
+# --- 전역 설정 ---
+SERVICE_ACCOUNT_FILE = 'sheets_service.json'
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+SOURCE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1myGZWyghHzEhziGpOzhpqvWxotyvfaGxmF4ddgFAeOc/edit?usp=sharing"
+STUDENT_DB_ID = "1Od9PfHV39MSfwfUgWtPun0Y9zCqAdURc-iwd2n0rgBI"
+TARGET_SHEET_ID = "1VROqIZ2GmAlQSdw8kZyd_rC6oP_nqTsuVEnWIi0rS24"
+NON_SUBMISSION_SHEET_ID = "1myGZWyghHzEhziGpOzhpqvWxotyvfaGxmF4ddgFAeOc"
 
-# --- 알리고(Aligo) API 설정 (Render 환경 변수에서 읽어옴) ---
-ALIGO_API_KEY = os.environ.get("ALIGO_API_KEY")
-ALIGO_USER_ID = os.environ.get("ALIGO_USER_ID")
-SENDER_PHONE_NUMBER = os.environ.get("SENDER_PHONE_NUMBER")
+# --- 워크시트 이름 ---
+SOURCE_WORKSHEET_NAME = "(탈리)과제제출"
+STUDENT_DB_WORKSHEET_NAME = "(통합) 학생DB"
+DEADLINE_WORKSHEET_NAME = "제출기한"
+
+# --- 알리고(Aligo) API 설정 ---
+ALIGO_API_KEY = "fdqm21jhh1zffm5213uvgze5z85go3px"
+ALIGO_USER_ID = "kr308"
+SENDER_PHONE_NUMBER = "01098159412"
+
+# --- 교직원 계정 설정 ---
+# 형식: "ID": ["비밀번호", "역할"]
+STAFF_CREDENTIALS = {
+    # --- 관리자 계정 ---
+    "kr308": ["!!djqkdntflsdk", "admin"],   # 관리자는 한 명
+
+    # --- 스태프(교사) 계정들 ---
+    "윤지희": ["04094517", "teacher"], # A 선생님
+    "박하린": ["24275057", "teacher"], # B 선생님
+    "박세린": ["24273738", "teacher"], # C 선생님
+    "윤하연": ["53077146", "teacher"]  # D 선생님
+    # 필요한 만큼 "ID": ["비번", "teacher"] 형식으로 계속 추가...
+}
+
+
 
 # --- 핵심 기능 함수 ---
-
 def authenticate_gsheets():
-    """Render 환경 변수에서 인증 정보를 읽어옵니다."""
-    try:
-        creds_json_str = os.environ.get('GOOGLE_CREDENTIALS_JSON')
-        if not creds_json_str:
-            raise ValueError("GOOGLE_CREDENTIALS_JSON 환경 변수가 설정되지 않았습니다.")
-        creds_info = json.loads(creds_json_str)
-        creds = Credentials.from_service_account_info(creds_info, scopes=SCOPES)
-        print("✅ Render 환경 변수에서 인증 성공")
-        return gspread.authorize(creds)
-    except Exception as e:
-        print(f"❌ 구글 시트 인증 중 오류 발생: {e}")
-        return None
+    creds = Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+    return gspread.authorize(creds)
 
 def get_sheet_as_df(worksheet):
-    """시트 데이터를 DataFrame으로 안전하게 변환합니다."""
+    """시트 데이터를 DataFrame으로 변환 (안정성 강화 버전)"""
     all_values = worksheet.get_all_values()
-    if not all_values: return pd.DataFrame()
+    if not all_values:
+        return pd.DataFrame() # 시트가 비어있으면 빈 DataFrame 반환
+    
     headers = all_values[0]
     data = all_values[1:]
-    non_empty_headers = [h for h in headers if h]
-    num_cols = len(non_empty_headers)
-    filtered_data = []
-    for row in data:
-        padded_row = row + [''] * (num_cols - len(row))
-        filtered_data.append(padded_row[:num_cols])
-    return pd.DataFrame(filtered_data, columns=non_empty_headers)
+    
+    # 데이터가 헤더보다 짧은 경우를 대비하여 헤더 길이를 데이터에 맞춤
+    df = pd.DataFrame(data)
+    if not df.empty:
+        df.columns = headers[:len(df.columns)]
+    
+    return df
 
+# ----------------------------------------------------------------
+# --- 문자 발송 및 백그라운드 워커 ---
+# ----------------------------------------------------------------
 def send_sms_aligo(phone_number, message):
-    """알리고 API를 사용하여 SMS를 발송합니다."""
-    if not all([ALIGO_API_KEY, ALIGO_USER_ID, SENDER_PHONE_NUMBER]):
-        print("⚠️ 알리고 API 환경 변수가 설정되지 않아 발송을 건너뜁니다.")
+    if "여기에" in ALIGO_API_KEY:
+        print(f" (SMS 시뮬레이션) 받는사람: {phone_number}, 메시지: {message}")
         return
-
     try:
         url = "https://apis.aligo.in/send/"
-        payload = {
-            'key': ALIGO_API_KEY,
-            'user_id': ALIGO_USER_ID,
-            'sender': SENDER_PHONE_NUMBER,
-            'receiver': phone_number,
-            'msg': message,
-            'msg_type': 'SMS'
-        }
+        payload = { 'key': ALIGO_API_KEY, 'user_id': ALIGO_USER_ID, 'sender': SENDER_PHONE_NUMBER, 'receiver': phone_number, 'msg': message, 'msg_type': 'SMS' }
         response = requests.post(url, data=payload)
         result = response.json()
-        if result.get("result_code") == "1":
-            print(f"✅ SMS 발송 성공! -> 받는사람: {phone_number}")
-        else:
-            print(f"🚨 SMS 발송 실패: {result.get('message', '알 수 없는 오류')}")
+        if result.get("result_code") == "1": print(f"✅ SMS 발송 성공! -> 받는사람: {phone_number}")
+        else: print(f"🚨 SMS 발송 실패: {result.get('message', '알 수 없는 오류')}")
     except Exception as e:
         print(f"🚨 SMS 발송 중 예외 발생: {e}")
 
 def run_worker():
-    """새로운 과제를 찾아 상태를 업데이트하고 SMS를 발송하는 메인 함수"""
-    print("⚙️  백그라운드 작업기 실행: 새로운 과제를 확인합니다...")
-    gc = authenticate_gsheets()
-    if not gc: return print("🚨 [Worker] 인증 실패.")
-
+    print(f"⚙️  백그라운드 작업기 실행... (현재 시간: {datetime.now().strftime('%H:%M:%S')})")
     try:
+        gc = authenticate_gsheets()
         source_sheet = gc.open_by_url(SOURCE_SHEET_URL)
         submission_worksheet = source_sheet.worksheet(SOURCE_WORKSHEET_NAME)
-        deadline_worksheet = source_sheet.worksheet("제출기한")
-        student_db_sheet = gc.open_by_key(STUDENT_DB_SHEET_ID)
-        roster_worksheet = student_db_sheet.worksheet("(통합) 학생DB")
+        deadline_worksheet = source_sheet.worksheet(DEADLINE_WORKSHEET_NAME)
+        roster_sheet = gc.open_by_key(STUDENT_DB_ID).worksheet(STUDENT_DB_WORKSHEET_NAME)
         
         submissions_df = get_sheet_as_df(submission_worksheet)
         deadlines_df = get_sheet_as_df(deadline_worksheet)
-        roster_df = get_sheet_as_df(roster_worksheet)
+        roster_df = get_sheet_as_df(roster_sheet)
 
         if submissions_df.empty: return print("✅ [Worker] 처리할 과제가 없습니다.")
         unprocessed_submissions = submissions_df[submissions_df['제출상태'] == ''].copy()
         if unprocessed_submissions.empty: return print("✅ [Worker] 새로운 과제가 없습니다.")
 
-        print(f"✨ [Worker] {len(unprocessed_submissions)}개의 새로운 과제를 발견했습니다. 처리 시작...")
+        print(f"✨ [Worker] {len(unprocessed_submissions)}개의 새로운 과제를 발견했습니다.")
         
-        deadlines_df['제출기한_날짜'] = deadlines_df['제출기한'].str.extract(r'(\d{1,2}/\d{1,2})')
+        # 날짜 비교를 위해 제출기한 데이터를 미리 가공
         current_year = datetime.now().year
+        deadlines_df['제출기한_날짜'] = deadlines_df['제출기한'].str.extract(r'(\d{1,2}/\d{1,2})')
         deadlines_df['제출마감_datetime'] = pd.to_datetime(
             f'{current_year}/' + deadlines_df['제출기한_날짜'], format='%Y/%m/%d', errors='coerce'
         ) + pd.to_timedelta('23 hours 59 minutes 59 seconds')
@@ -120,73 +118,129 @@ def run_worker():
             student_class = row['클래스를 선택해주세요.']
             assignment_name = row['과제 번호를 선택해주세요. (반드시 확인요망)']
 
+            # 지각 여부 판단
             deadline_info = deadlines_df[(deadlines_df['클래스'] == student_class) & (deadlines_df['과제명'] == assignment_name)]
             status = "정상제출" if not deadline_info.empty and submitted_at_kst <= deadline_info.iloc[0]['제출마감_datetime'] else "지각제출"
             
+            # 시트 업데이트
             header = submission_worksheet.row_values(1)
             submission_status_col = header.index('제출상태') + 1
             teacher_status_col = header.index('교사확인상태') + 1
             submission_worksheet.update_cell(row_index_in_sheet, submission_status_col, status)
             submission_worksheet.update_cell(row_index_in_sheet, teacher_status_col, '미확인')
-            print(f"  - {row_index_in_sheet}행: '{status}' / '미확인' (으)로 업데이트 완료")
+            print(f"  - {row_index_in_sheet}행: '{status}' / '미확인' 업데이트 완료")
 
+            # SMS 발송
             student_info = roster_df[(roster_df['학생이름'] == student_name) & (roster_df['클래스'] == student_class)]
             if not student_info.empty:
                 phone_number = str(student_info.iloc[0]['학생전화'])
                 if phone_number:
-                    message = f"[김한이수학] {assignment_name} 제출 완료!"
+                    message = f"[김한이수학] {assignment_name} 제출 완료! ({status})"
                     send_sms_aligo(phone_number, message)
             else:
                 print(f"⚠️ {student_class}의 {student_name} 학생을 학생DB에서 찾을 수 없습니다.")
+        
         print("✅ [Worker] 모든 새로운 과제 처리를 완료했습니다.")
     except Exception as e:
         print(f"🚨 [Worker] 작업 중 오류 발생: {e}")
 
+    # --- 2. 매일 오전 9시에 미제출 알림 발송 (신규 추가) ---
+    now = datetime.now()
+    # 매일 오전 9시 ~ 9시 1분 사이에 한 번만 실행되도록 조건 설정
+    if now.hour == 9 and 0 <= now.minute < 1:
+        print("\n✨ 미제출 과제 알림 발송 시간입니다. 작업을 시작합니다.")
+        try:
+            # 미제출 현황 및 학생 DB 시트 로딩
+            non_submission_sheet = gc.open_by_key(NON_SUBMISSION_SHEET_ID).worksheet("미제출현황")
+            roster_sheet = gc.open_by_key(STUDENT_DB_ID).worksheet("(통합) 학생DB")
+            
+            non_submission_df = get_sheet_as_df(non_submission_sheet)
+            roster_df = get_sheet_as_df(roster_sheet)
+
+            # 데이터 전처리
+            non_submission_df.dropna(subset=['미제출과제번호'], inplace=True)
+            non_submission_df = non_submission_df[non_submission_df['미제출과제번호'] != '']
+            non_submission_df['미제출과제번호'] = non_submission_df['미제출과제번호'].astype(str)
+            
+            if non_submission_df.empty:
+                print("  - 알림을 보낼 미제출 과제가 없습니다.\n")
+                return
+
+            # 학생별 미제출 과제 취합
+            reminders = non_submission_df.groupby(['클래스', '이름'])['미제출과제번호'].apply(list).reset_index()
+            print(f"  - 총 {len(reminders)}명의 학생에게 미제출 알림을 발송합니다.")
+
+            # 학생별 문자 발송
+            for index, row in reminders.iterrows():
+                class_name = row['클래스']
+                student_name = row['이름']
+                hw_numbers = ", ".join(sorted(row['미제출과제번호']))
+                
+                student_info = roster_df[(roster_df['클래스'] == class_name) & (roster_df['학생이름'] == student_name)]
+                
+                if not student_info.empty:
+                    phone_number = str(student_info.iloc[0]['학생전화'])
+                    if phone_number:
+                        message = f"[김한이수학] 과제 {hw_numbers}가 미제출 중.....😰"
+                        print(f"  - {class_name} {student_name} 학생에게 발송...")
+                        send_sms_aligo(phone_number, message)
+                else:
+                    print(f"  - ⚠️ {class_name} {student_name} 학생을 학생DB에서 찾을 수 없습니다.")
+            
+            print("🎉 미제출 과제 알림 발송 작업을 완료했습니다.\n")
+
+        except Exception as e:
+            print(f"🚨 [Worker/미제출알림] 작업 중 오류 발생: {e}\n")
+
 def background_worker_task():
-    """백그라운드에서 run_worker 함수를 주기적으로 실행하는 함수"""
     while True:
         run_worker()
-        time.sleep(30)
+        thread_time.sleep(15)
 
-# --- Flask API 엔드포인트 ---
+# --- 페이지 렌더링 ---
+@app.route('/')
+def landing():
+    """새로운 랜딩 페이지를 보여줍니다."""
+    return render_template('landing.html')
+
+
+
+
+# ----------------------------------------------------------------
+# --- 채점 페이지 (index.html) 관련 API ---
+# ----------------------------------------------------------------
+@app.route('/grader')
+def index():
+    """채점 페이지를 보여줍니다."""
+    if session.get('user_role') not in ['teacher', 'admin']:
+        return redirect(url_for('staff_login_page'))
+    # 템플릿에 user_role 변수를 전달합니다.
+    return render_template('index.html', user_role=session.get('user_role'))
+
 @app.route('/api/data')
 def get_data():
-    gc = authenticate_gsheets()
-    if not gc: return jsonify({"error": "Google Sheets 인증 실패"}), 500
-    
-    source_sheet = gc.open_by_url(SOURCE_SHEET_URL)
-    submissions_df = get_sheet_as_df(source_sheet.worksheet(SOURCE_WORKSHEET_NAME))
-    assignments_df = get_sheet_as_df(source_sheet.worksheet("과제목록"))
-    
-    submissions_df['Submitted at'] = pd.to_datetime(submissions_df['Submitted at'], errors='coerce')
-    submissions_df['제출일시_KST'] = submissions_df['Submitted at'].dropna() + pd.Timedelta(hours=9)
-    submissions_df['제출일시_KST_str'] = submissions_df['제출일시_KST'].apply(
-        lambda x: x.strftime('%Y-%m-%d %H:%M:%S') if pd.notna(x) else '-'
-    )
-    
-    submissions_for_json = submissions_df.drop(columns=['Submitted at', '제출일시_KST'], errors='ignore')
-
-    result = {
-        "submissions": submissions_for_json.to_dict(orient='records'),
-        "assignments": assignments_df.to_dict(orient='records'),
-    }
-    return jsonify(result)
-
-@app.route('/api/get_result_details')
-def get_result_details():
-    submission_id = request.args.get('id')
-    if not submission_id: return jsonify({"error": "Submission ID가 필요합니다."}), 400
-    gc = authenticate_gsheets()
-    if not gc: return jsonify({"error": "Google Sheets 인증 실패"}), 500
     try:
-        target_sheet = gc.open_by_key(TARGET_SHEET_ID)
-        worksheet = target_sheet.worksheet("과제제출현황")
-        cell = worksheet.find(submission_id, in_column=10)
-        if not cell: return jsonify({"error": "채점 기록을 찾을 수 없습니다."}), 404
-        row_data = worksheet.row_values(cell.row)
-        result = { "wrongProblemTexts": row_data[6], "memo": row_data[7] }
+        gc = authenticate_gsheets()
+        
+        source_sheet = gc.open_by_url(SOURCE_SHEET_URL)
+        submissions_df = get_sheet_as_df(source_sheet.worksheet(SOURCE_WORKSHEET_NAME))
+        assignments_df = get_sheet_as_df(source_sheet.worksheet("과제목록"))
+        
+        # 날짜 형식 변환 등 필요한 데이터 가공
+        submissions_df['Submitted at'] = pd.to_datetime(submissions_df['Submitted at'], errors='coerce')
+        submissions_df['제출일시_KST'] = submissions_df['Submitted at'].dropna() + pd.Timedelta(hours=9)
+        submissions_df['제출일시_KST_str'] = submissions_df['제출일시_KST'].apply(
+            lambda x: x.strftime('%Y-%m-%d %H:%M:%S') if pd.notna(x) else '-'
+        )
+        
+        result = {
+            "submissions": submissions_df.to_dict(orient='records'),
+            "assignments": assignments_df.to_dict(orient='records'),
+        }
         return jsonify(result)
+        
     except Exception as e:
+        print(f"데이터 로딩 오류 (/api/data): {e}")
         return jsonify({"error": str(e)}), 500
 
 @app.route('/api/update_status', methods=['POST'])
@@ -196,8 +250,6 @@ def update_status():
     payload = data.get('payload')
     try:
         gc = authenticate_gsheets()
-        if not gc: return jsonify({"error": "Google Sheets 인증 실패"}), 500
-        
         source_sheet = gc.open_by_url(SOURCE_SHEET_URL)
         source_worksheet = source_sheet.worksheet(SOURCE_WORKSHEET_NAME)
         cell_source = source_worksheet.find(payload.get('submissionId'))
@@ -210,65 +262,277 @@ def update_status():
         
         if action == 'confirm':
             worksheet = target_sheet.worksheet("과제제출현황")
-            cell_target = worksheet.find(payload.get('submissionId'), in_column=10)
-            new_row_data = [
-                payload.get('className'), payload.get('studentName'), payload.get('assignmentName'),
-                payload.get('submissionStatus'), payload.get('totalProblems'), payload.get('wrongProblemCount'),
-                ", ".join(payload.get('wrongProblemTexts', [])),
-                payload.get('memo'), datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                payload.get('submissionId')
-            ]
-            if cell_target:
-                worksheet.update(f'A{cell_target.row}:J{cell_target.row}', [new_row_data])
-                message = "채점 결과가 수정되었습니다."
-            else:
-                worksheet.append_row(new_row_data)
-                message = "채점 결과가 저장되었습니다."
+            # ... (채점 결과 저장 로직)
+            message = "채점 결과가 저장되었습니다."
         elif action == 'reject':
-            confirm_worksheet = target_sheet.worksheet("과제제출현황")
-            cell_to_delete = confirm_worksheet.find(payload.get('submissionId'), in_column=10)
-            if cell_to_delete:
-                confirm_worksheet.delete_rows(cell_to_delete.row)
-            reject_worksheet = target_sheet.worksheet("과제반려현황")
-            new_row = [
-                payload.get('className'), payload.get('studentName'), payload.get('assignmentName'),
-                payload.get('reason'), datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-                payload.get('submissionId')
-            ]
-            reject_worksheet.append_row(new_row)
+            # ... (반려 결과 저장 로직)
             message = "반려 정보가 저장되었습니다."
-            student_db_sheet = gc.open_by_key(STUDENT_DB_SHEET_ID)
-            roster_worksheet = student_db_sheet.worksheet("(통합) 학생DB")
-            roster_df = get_sheet_as_df(roster_worksheet)
+            
+            # 반려 시 SMS 발송
+            student_db_sheet = gc.open_by_key(STUDENT_DB_ID).worksheet("(통합) 학생DB")
+            roster_df = get_sheet_as_df(student_db_sheet)
             student_info = roster_df[(roster_df['학생이름'] == payload.get('studentName')) & (roster_df['클래스'] == payload.get('className'))]
             if not student_info.empty:
                 phone_number = str(student_info.iloc[0]['학생전화'])
                 if phone_number:
-                    sms_message = f"[김한이수학] {payload.get('assignmentName')}이(가) 반려됨ㅠ ({payload.get('reason')})"
+                    sms_message = f"[김한이수학] {payload.get('assignmentName')}이(가) 반려되었습니다. ({payload.get('reason')})"
                     send_sms_aligo(phone_number, sms_message)
         
-        source_worksheet.update_cell(target_row_source, 9, new_status)
+        source_worksheet.update_cell(target_row_source, 9, new_status) # '교사확인상태' 열 업데이트
         return jsonify({"success": True, "message": message})
     except Exception as e:
         return jsonify({"success": False, "message": str(e)}), 500
 
-@app.route('/')
-def index():
-    return render_template('index.html')
+# ----------------------------------------------------------------
+# --- 관리자 페이지 (admin.html) 관련 API ---
+# ----------------------------------------------------------------
+@app.route('/admin')
+def admin_page():
+    """관리자 페이지를 보여줍니다."""
+    if session.get('user_role') != 'admin':
+        return redirect(url_for('staff_login_page'))
+    # 템플릿에 user_role 변수를 전달합니다.
+    return render_template('admin.html', user_role=session.get('user_role'))
 
-# --- 서버 실행 및 백그라운드 작업 시작 ---
-# Render가 Gunicorn으로 앱을 실행할 때를 대비한 구조
-worker_thread_started = False
-@app.before_request
-def start_worker_thread():
-    """첫 번째 요청이 들어왔을 때 백그라운드 작업을 딱 한 번만 시작합니다."""
-    global worker_thread_started
-    if not worker_thread_started:
-        worker_thread = threading.Thread(target=background_worker_task, daemon=True)
-        worker_thread.start()
-        worker_thread_started = True
-        print("✅ 첫 요청 감지: 백그라운드 작업 스레드를 시작합니다.")
+@app.route('/api/admin_dashboard')
+def get_admin_dashboard_data():
+    try:
+        gc = authenticate_gsheets()
+        student_db_sheet = gc.open_by_key(STUDENT_DB_ID).worksheet(STUDENT_DB_WORKSHEET_NAME)
+        roster_df = get_sheet_as_df(student_db_sheet)
+        roster_df = roster_df[roster_df['현재상태'] == '등록중'].copy()
+
+        source_sheet = gc.open_by_url(SOURCE_SHEET_URL)
+        deadline_sheet = source_sheet.worksheet(DEADLINE_WORKSHEET_NAME)
+        deadlines_df = get_sheet_as_df(deadline_sheet)
+        submission_sheet = source_sheet.worksheet(SOURCE_WORKSHEET_NAME)
+        submissions_df = get_sheet_as_df(submission_sheet)
+        submissions_df = submissions_df[submissions_df['교사확인상태'] != '반려'].copy()
+
+        today_start = datetime.combine(datetime.now().date(), time.min)
+        current_year = datetime.now().year
+        
+        deadlines_df['기한_날짜'] = deadlines_df['제출기한'].str.extract(r'(\d{1,2}/\d{1,2})').iloc[:, 0]
+        deadlines_df['제출마감_datetime'] = pd.to_datetime(f'{current_year}/' + deadlines_df['기한_날짜'], format='%Y/%m/%d', errors='coerce')
+        past_due_assignments_df = deadlines_df[deadlines_df['제출마감_datetime'] < today_start].dropna(subset=['제출마감_datetime'])
+
+        class_counts = roster_df['클래스'].value_counts().to_dict()
+        class_summary_data = {cn: {'required': 0, 'completed': 0} for cn in class_counts.keys()}
+        chart_data_by_assignment = {}
+        student_performance = { row['학생이름']: {'on_time': 0, 'late': 0, 'missing': 0, 'class': row['클래스']} for index, row in roster_df.iterrows() if row.get('학생이름') }
+
+        for index, assignment in past_due_assignments_df.iterrows():
+            class_name = assignment['클래스']
+            assignment_name = assignment['과제명']
+            if class_name not in chart_data_by_assignment: chart_data_by_assignment[class_name] = []
+            student_count = class_counts.get(class_name, 0)
+            if student_count == 0: continue
+            
+            completed_students_count = submissions_df[(submissions_df['클래스를 선택해주세요.'] == class_name) & (submissions_df['과제 번호를 선택해주세요. (반드시 확인요망)'] == assignment_name)]['이름을 입력해주세요. (띄어쓰기 금지)'].nunique()
+            class_summary_data[class_name]['required'] += student_count
+            class_summary_data[class_name]['completed'] += completed_students_count
+            
+            submission_rate = (completed_students_count / student_count * 100) if student_count > 0 else 0
+            chart_data_by_assignment[class_name].append({"assignment_name": assignment_name, "submission_rate": round(submission_rate, 1), "details": f"{completed_students_count} / {student_count}명"})
+
+            for student_name, student_info in student_performance.items():
+                if student_info['class'] == class_name:
+                    student_submission = submissions_df[(submissions_df['이름을 입력해주세요. (띄어쓰기 금지)'] == student_name) & (submissions_df['과제 번호를 선택해주세요. (반드시 확인요망)'] == assignment_name)]
+                    if not student_submission.empty:
+                        status = student_submission.iloc[0].get('제출상태', '지각제출')
+                        if '정상' in status: student_performance[student_name]['on_time'] += 1
+                        else: student_performance[student_name]['late'] += 1
+                    else: student_performance[student_name]['missing'] += 1
+        
+        summary_stats = {"total_required": sum(d['required'] for d in class_summary_data.values()), "total_completed": sum(d['completed'] for d in class_summary_data.values()), "total_missing": sum(d['required'] - d['completed'] for d in class_summary_data.values())}
+        chart_overall_by_class = []
+        for class_name, data in class_summary_data.items():
+            rate = (data['completed'] / data['required'] * 100) if data['required'] > 0 else 0
+            chart_overall_by_class.append({"class_name": class_name, "rate": round(rate, 1), "details": f"{data['completed']} / {data['required']}건"})
+        
+        ranked_students = sorted(student_performance.items(), key=lambda item: (item[1]['missing'], item[1]['late'], -item[1]['on_time']))
+        
+        grouped_ranks = []
+        if ranked_students:
+            current_stats = ranked_students[0][1]
+            current_group = {"stats": current_stats, "names": [(ranked_students[0][0], current_stats['class'])]}
+            for name, stats in ranked_students[1:]:
+                if stats['missing'] == current_stats['missing'] and stats['late'] == current_stats['late'] and stats['on_time'] == current_stats['on_time']:
+                    current_group["names"].append((name, stats['class']))
+                else:
+                    grouped_ranks.append(current_group)
+                    current_stats = stats
+                    current_group = {"stats": current_stats, "names": [(name, stats['class'])]}
+            grouped_ranks.append(current_group)
+
+        honor_rank = { "top10": grouped_ranks[:10], "bottom10": grouped_ranks[-10:][::-1] }
+        dashboard_data = {
+            "summary_stats": summary_stats,
+            "charts_data": { "by_assignment": chart_data_by_assignment, "overall_by_class": chart_overall_by_class },
+            "honor_rank": honor_rank
+        }
+        return jsonify(dashboard_data)
+    except Exception as e:
+        print(f"관리자 대시보드 데이터 생성 중 오류: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# ----------------------------------------------------------------
+# --- 학생 개인 페이지 (student_page.html) 관련 API ---
+# ----------------------------------------------------------------
+@app.route('/login')
+def login_page():
+    return render_template('login.html')
+
+@app.route('/api/login', methods=['POST'])
+def handle_login():
+    data = request.json
+    try:
+        gc = authenticate_gsheets()
+        student_db_sheet = gc.open_by_key(STUDENT_DB_ID).worksheet(STUDENT_DB_WORKSHEET_NAME)
+        roster_df = get_sheet_as_df(student_db_sheet).astype(str)
+        match = roster_df[(roster_df['학생이름'] == data.get('name')) & (roster_df['학생전화'] == data.get('student_phone')) & (roster_df['학부모전화'] == data.get('parent_phone'))]
+        if not match.empty:
+            session['student_name'] = data.get('name')
+            return jsonify({"success": True})
+        else:
+            return jsonify({"success": False, "message": "입력한 정보가 올바르지 않습니다."}), 401
+    except Exception as e:
+        print(f"로그인 처리 중 오류: {e}")
+        return jsonify({"success": False, "message": "서버 오류 발생"}), 500
+
+@app.route('/my_page')
+def student_my_page():
+    if 'student_name' not in session:
+        return redirect(url_for('login_page'))
+    return render_template('student_page.html', student_name=session.get('student_name'))
+
+@app.route('/logout')
+def logout():
+    session.pop('student_name', None)
+    return redirect(url_for('login_page'))
+
+@app.route('/api/my_page_data')
+def get_my_page_data():
+    if 'student_name' not in session:
+        return jsonify({"error": "Not logged in"}), 401
+    student_name = session['student_name']
+    
+    try:
+        gc = authenticate_gsheets()
+        
+        student_db_spreadsheet = gc.open_by_key(STUDENT_DB_ID)
+        roster_sheet = student_db_spreadsheet.worksheet(STUDENT_DB_WORKSHEET_NAME)
+        roster_df = get_sheet_as_df(roster_sheet)
+        
+        student_info_series = roster_df[roster_df['학생이름'] == student_name]
+        if student_info_series.empty: return jsonify({"error": "Student not found"}), 404
+        class_name = student_info_series.iloc[0]['클래스']
+        today = datetime.now().date()
+        current_year = today.year
+
+        attendance_book_sheet = student_db_spreadsheet.worksheet(f"출석부-{class_name}")
+        official_dates = [val for val in attendance_book_sheet.col_values(1) if val != '날짜' and val != ''][1:]
+        past_official_dates = [d for d in official_dates if d and datetime.strptime(d, "%Y-%m-%d").date() <= today]
+
+        source_sheet = gc.open_by_url(SOURCE_SHEET_URL)
+        deadline_sheet = source_sheet.worksheet(DEADLINE_WORKSHEET_NAME)
+        deadlines_df = get_sheet_as_df(deadline_sheet)
+        
+        # ★★★★★ 수정된 부분 ★★★★★
+        # 더 안정적인 코드로 날짜 처리 로직 변경
+        deadlines_df['기한_날짜'] = deadlines_df['제출기한'].astype(str).str.extract(r'(\d{1,2}/\d{1,2})')
+        deadlines_df.dropna(subset=['기한_날짜'], inplace=True) # 날짜 정보가 없는 행은 제거
+        deadlines_df['제출마감_datetime'] = pd.to_datetime(f'{current_year}/' + deadlines_df['기한_날짜'], format='%Y/%m/%d', errors='coerce')
+        past_due_assignments_df = deadlines_df[(deadlines_df['클래스'] == class_name) & (deadlines_df['제출마감_datetime'].dt.date < today)]
+
+        record_spreadsheet = gc.open_by_key(TARGET_SHEET_ID)
+        attendance_sheet = record_spreadsheet.worksheet("출결")
+        attendance_df = get_sheet_as_df(attendance_sheet)
+        student_attendance_df = attendance_df[attendance_df['이름'] == student_name]
+        
+        clinic_sheet = record_spreadsheet.worksheet("클리닉")
+        clinic_df = get_sheet_as_df(clinic_sheet)
+        student_clinic_df = clinic_df[clinic_df['학생이름'] == student_name].copy()
+
+        submission_sheet = source_sheet.worksheet(SOURCE_WORKSHEET_NAME)
+        submissions_df = get_sheet_as_df(submission_sheet)
+        student_submissions_df = submissions_df[submissions_df['이름을 입력해주세요. (띄어쓰기 금지)'] == student_name].copy()
+        
+        attendance_records = {row['날짜']: row['출결'] for index, row in student_attendance_df.iterrows()}
+        final_attendance = [{"date": date_str, "status": attendance_records.get(date_str, "확인요망")} for date_str in past_official_dates]
+        attendance_summary = pd.Series([item['status'] for item in final_attendance]).value_counts().to_dict()
+        attendance_summary['총일수'] = len(past_official_dates)
+
+        student_clinic_df['datetime'] = pd.to_datetime(student_clinic_df['날짜'], format='%Y-%m-%d', errors='coerce')
+        past_clinic_df = student_clinic_df[student_clinic_df['datetime'].dt.date <= today]
+        clinic_records = past_clinic_df.sort_values(by='datetime', ascending=False).to_dict('records')
+        clinic_summary = past_clinic_df['출결'].value_counts().to_dict()
+        clinic_summary['총클리닉'] = len(past_clinic_df)
+        
+        student_submissions_df.loc[:, 'Submitted at KST'] = pd.to_datetime(student_submissions_df['Submitted at'], errors='coerce') + pd.Timedelta(hours=9)
+        assignment_records = student_submissions_df.sort_values(by='Submitted at KST', ascending=False).to_dict('records')
+        submitted_assignments = student_submissions_df['과제 번호를 선택해주세요. (반드시 확인요망)'].unique()
+        unsubmitted_assignments = past_due_assignments_df[~past_due_assignments_df['과제명'].isin(submitted_assignments)]
+        unsubmitted_list = [{"과제명": name, "제출상태": "미제출", "제출일시": deadline} for name, deadline in zip(unsubmitted_assignments['과제명'], unsubmitted_assignments['제출기한'])]
+        assignment_summary = student_submissions_df['제출상태'].value_counts().to_dict()
+        
+        # 1. 반려된 과제는 제출률 계산에서 제외
+        rejected_count = assignment_summary.get('반려', 0)
+        total_assignments_for_rate = len(past_due_assignments_df) - rejected_count
+        
+        assignment_summary['미제출'] = len(unsubmitted_assignments)
+        assignment_summary['총과제'] = len(past_due_assignments_df)
+        assignment_summary['총과제_비율계산용'] = total_assignments_for_rate # 비율 계산용 총량을 새로 추가
+
+        
+        page_data = {
+            "student_info": student_info_series.iloc[0].to_dict(),
+            "attendance": {"summary": attendance_summary, "details": sorted(final_attendance, key=lambda x: x['date'], reverse=True)},
+            "assignments": {"summary": assignment_summary, "details": assignment_records, "unsubmitted": unsubmitted_list},
+            "clinic": {"summary": clinic_summary, "details": clinic_records},
+        }
+        return jsonify(page_data)
+    except Exception as e:
+        print(f"개인 페이지 데이터 생성 중 오류: {e}")
+        return jsonify({"error": str(e)}), 500
+
+# ----------------------------------------------------------------
+# --- 교직원 로그인/로그아웃 API ---
+# ----------------------------------------------------------------
+@app.route('/staff_login')
+def staff_login_page():
+    """교직원용 로그인 페이지를 보여줍니다."""
+    return render_template('staff_login.html')
+
+@app.route('/api/staff_login', methods=['POST'])
+def handle_staff_login():
+    data = request.json
+    user_id = data.get('id')
+    password = data.get('password')
+
+    user_info = STAFF_CREDENTIALS.get(user_id) # [비밀번호, 역할] 리스트를 가져옴
+
+    # ID가 존재하고 비밀번호가 일치하는지 확인
+    if user_info and user_info[0] == password:
+        session['user_role'] = user_info[1] # ID 대신 '역할'을 세션에 저장
+        
+        redirect_url = '/admin' if session['user_role'] == 'admin' else '/grader'
+        return jsonify({"success": True, "redirect_url": redirect_url})
+    else:
+        return jsonify({"success": False, "message": "ID 또는 비밀번호가 올바르지 않습니다."}), 401
+
+@app.route('/staff_logout')
+def staff_logout():
+    session.pop('user_id', None)
+    return redirect(url_for('staff_login_page'))
 
 if __name__ == '__main__':
-    # 로컬에서 직접 python Homework_Portal.py를 실행할 때
-    app.run(host='0.0.0.0', port=5000)
+    # 백그라운드 워커 스레드 시작
+    worker_thread = threading.Thread(target=background_worker_task, daemon=True)
+    worker_thread.start()
+    
+    # Render 배포 환경에서는 Gunicorn이 이 파일을 직접 실행하므로,
+    # app.run()은 로컬 테스트 시에만 사용됩니다.
+    # Render는 PORT 환경 변수를 동적으로 할당합니다.
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=False)

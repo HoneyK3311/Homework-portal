@@ -3,207 +3,199 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>관리자 뷰어</title>
+    <title>관리자 대시보드</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
         body { font-family: 'Noto Sans KR', sans-serif; }
-        .custom-scrollbar::-webkit-scrollbar { width: 8px; height: 8px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background-color: #f1f1f1; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background-color: #888; border-radius: 10px; }
-        .tab-button { transition: all 0.2s ease-in-out; }
-        .tab-button.active { border-color: #4f46e5; color: #4f46e5; background-color: #eef2ff; }
         .loader { border: 5px solid #f3f3f3; border-top: 5px solid #4f46e5; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .details-list { max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out; }
     </style>
 </head>
 <body class="bg-gray-100 text-gray-800">
 
     <div id="loading-indicator" class="fixed inset-0 bg-white bg-opacity-75 flex flex-col justify-center items-center z-50">
         <div class="loader"></div>
-        <p class="mt-4 text-lg font-semibold text-gray-700">관리자 데이터를 불러오는 중입니다...</p>
+        <p class="mt-4 text-lg font-semibold text-gray-700">대시보드 데이터를 불러오는 중...</p>
     </div>
 
-    <div id="app" class="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto hidden">
-        <header class="mb-8 flex justify-between items-center">
-            <div>
-                <h1 class="text-3xl font-bold text-gray-900">통합 관리자 뷰어</h1>
-                <p class="text-gray-600 mt-1">'학생데이터기록함'의 모든 이력을 조회하고 관리합니다.</p>
-            </div>
-            <a href="/" class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition-colors">
-                채점 대시보드로 가기 &rarr;
-            </a>
-        </header>
-
-        <!-- 탭 메뉴 -->
-        <div class="mb-6">
-            <div class="border-b border-gray-200">
-                <nav class="-mb-px flex space-x-8" aria-label="Tabs">
-                    <button id="tab-confirmed" type="button" class="tab-button active whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm">
-                        채점 완료 기록
-                    </button>
-                    <button id="tab-rejected" type="button" class="tab-button whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm text-gray-500 hover:text-gray-700 hover:border-gray-300">
-                        반려 기록
-                    </button>
-                </nav>
-            </div>
-        </div>
-
-        <!-- 검색 필터 -->
-        <div class="bg-white p-4 rounded-lg shadow-md mb-6">
-            <input type="text" id="search-input" class="w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500" placeholder="학생 이름, 클래스, 과제명 등으로 검색...">
-        </div>
-
-        <!-- 채점 완료 기록 테이블 -->
-        <div id="confirmed-view">
-            <h2 class="text-xl font-semibold mb-4">채점 완료 기록</h2>
-            <div class="bg-white rounded-lg shadow-md overflow-hidden">
-                <div class="overflow-x-auto custom-scrollbar">
-                    <table class="min-w-full divide-y divide-gray-200">
-                        <thead class="bg-gray-50">
-                            <tr>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">클래스</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">이름</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">과제명</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">오답 문항</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">메모</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">확인 시간</th>
-                            </tr>
-                        </thead>
-                        <tbody id="confirmed-table-body" class="bg-white divide-y divide-gray-200"></tbody>
-                    </table>
+        <div id="app" class="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto hidden">
+            <header class="flex justify-between items-center mb-8">
+                <div>
+                    <h1 class="text-3xl font-bold text-gray-900">통합 관리자 뷰어</h1>
+                    <p class="text-gray-600 mt-1">전체 과제 현황을 한눈에 파악하세요.</p>
                 </div>
+                <div class="space-x-2">
+                    <a href="/grader" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded">
+                        채점 페이지
+                    </a>
+                    <a href="/staff_logout" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded">
+                        로그아웃
+                    </a>
+                </div>
+            </header>
+            </div>
+
+        <div id="summary-cards" class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            </div>
+
+        <div class="grid grid-cols-1 lg:grid-cols-5 gap-6 mb-8">
+            <div class="lg:col-span-3 bg-white p-6 rounded-lg shadow-md">
+                <div class="flex justify-between items-center mb-4">
+                    <h2 class="text-xl font-bold">클래스별 과제 제출율</h2>
+                    <select id="class-selector" class="p-2 border rounded-md"><option>클래스를 선택하세요</option></select>
+                </div>
+                <div><canvas id="by-assignment-chart"></canvas></div>
+            </div>
+            <div class="lg:col-span-2 bg-white p-6 rounded-lg shadow-md">
+                 <h2 class="text-xl font-bold mb-4">클래스별 종합 제출율</h2>
+                 <div><canvas id="overall-by-class-chart"></canvas></div>
             </div>
         </div>
-
-        <!-- 반려 기록 테이블 -->
-        <div id="rejected-view" class="hidden">
-            <h2 class="text-xl font-semibold mb-4">반려 기록</h2>
-            <div class="bg-white rounded-lg shadow-md overflow-hidden">
-                <div class="overflow-x-auto custom-scrollbar">
-                    <table class="min-w-full divide-y divide-gray-200">
-                        <thead class="bg-gray-50">
-                            <tr>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">클래스</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">이름</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">과제명</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">반려 사유</th>
-                                <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">반려 시간</th>
-                            </tr>
-                        </thead>
-                        <tbody id="rejected-table-body" class="bg-white divide-y divide-gray-200"></tbody>
-                    </table>
-                </div>
+        
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h2 class="text-xl font-bold mb-4 text-blue-600">🏆 과제 성실 Top 10</h2>
+                <ul id="top10-list" class="space-y-2"></ul>
+            </div>
+            <div class="bg-white p-6 rounded-lg shadow-md">
+                <h2 class="text-xl font-bold mb-4 text-red-600">🚨 과제 관리 Bottom 10</h2>
+                <ul id="bottom10-list" class="space-y-2"></ul>
             </div>
         </div>
     </div>
 
     <script>
-        document.addEventListener('DOMContentLoaded', async function () {
-            // --- 전역 변수 ---
-            let allConfirmed = [];
-            let allRejected = [];
-
-            // --- DOM 요소 ---
+        document.addEventListener('DOMContentLoaded', async () => {
             const loadingIndicator = document.getElementById('loading-indicator');
             const appContainer = document.getElementById('app');
-            const tabConfirmed = document.getElementById('tab-confirmed');
-            const tabRejected = document.getElementById('tab-rejected');
-            const confirmedView = document.getElementById('confirmed-view');
-            const rejectedView = document.getElementById('rejected-view');
-            const confirmedTableBody = document.getElementById('confirmed-table-body');
-            const rejectedTableBody = document.getElementById('rejected-table-body');
-            const searchInput = document.getElementById('search-input');
+            let byAssignmentChart = null;
 
-            // --- 데이터 로딩 ---
+            const populateRankList = (listId, rankData) => {
+                const listElement = document.getElementById(listId);
+                listElement.innerHTML = '';
+                if (rankData.length === 0) {
+                    listElement.innerHTML = `<li class="text-gray-500">해당 학생이 없습니다.</li>`; return;
+                }
+                let rank = 0;
+                let lastStats = null;
+                rankData.forEach((group) => {
+                    const currentStats = JSON.stringify(group.stats);
+                    if (currentStats !== lastStats) {
+                        rank++;
+                        lastStats = currentStats;
+                    }
+
+                    const li = document.createElement('li');
+                    li.className = 'border rounded-md cursor-pointer';
+                    
+                    const representative = group.names[0];
+                    const others = group.names.slice(1);
+                    const representativeHTML = `${representative[0]}<sub>(${representative[1]})</sub>`;
+                    const othersText = others.length > 0 ? `<span class="ml-2 text-blue-500 font-semibold">외 ${others.length}명</span>` : '';
+                    
+                    // 동점자가 있을 때만 펼칠 명단 생성
+                    const detailsHTML = others.length > 0 ? 
+                        `<ul class="details-list pl-8 pt-2 text-sm text-gray-600">` +
+                            others.map(([name, className]) => `<li>${name}<sub>(${className})</sub></li>`).join('') +
+                        `</ul>` : '';
+
+                    li.innerHTML = `
+                        <div class="p-3 flex justify-between items-center">
+                            <div>
+                                <span class="font-bold text-lg mr-2">${rank}.</span>
+                                <span>${representativeHTML}</span>
+                                ${othersText}
+                            </div>
+                            <div class="text-xs text-right flex-shrink-0 ml-2">
+                                <span class="font-semibold text-green-600">정상: ${group.stats.on_time}</span>
+                                <span class="font-semibold text-yellow-600 ml-2">지각: ${group.stats.late}</span>
+                                <span class="font-semibold text-red-600 ml-2">미제출: ${group.stats.missing}</span>
+                            </div>
+                        </div>
+                        ${detailsHTML}
+                    `;
+                    listElement.appendChild(li);
+
+                    // 수정된 부분: 동점자가 있을 경우에만 토글 이벤트 리스너 추가
+                    if (others.length > 0) {
+                        li.addEventListener('click', () => {
+                            const detailsList = li.querySelector('.details-list');
+                            if (detailsList) { // detailsList가 있는지 확인
+                                if (detailsList.style.maxHeight) {
+                                    detailsList.style.maxHeight = null;
+                                } else {
+                                    detailsList.style.maxHeight = detailsList.scrollHeight + "px";
+                                }
+                            }
+                        });
+                    }
+                });
+            };
+            
             try {
-                const response = await fetch('/api/archive_data');
+                const response = await fetch('/api/admin_dashboard');
                 if (!response.ok) throw new Error(`서버 오류: ${response.status}`);
                 const data = await response.json();
-                allConfirmed = data.confirmed;
-                allRejected = data.rejected;
-                renderTables();
-            } catch (error) {
-                loadingIndicator.innerHTML = `<p class="text-red-500 font-bold">데이터 로딩 실패!</p><p class="mt-2">${error.message}</p>`;
-            } finally {
+
+                // 1. 종합 현황 카드 동적 생성
+                const summaryContainer = document.getElementById('summary-cards');
+                summaryContainer.innerHTML = `
+                    <div class="bg-white p-6 rounded-lg shadow-md flex items-center justify-between">
+                        <div><p class="text-sm font-medium text-gray-500">총 제출 의무 과제</p><p class="text-3xl font-bold text-gray-900">${data.summary_stats.total_required}</p></div>
+                        <div class="bg-blue-100 text-blue-600 rounded-full p-3"><svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg></div>
+                    </div>
+                    <div class="bg-white p-6 rounded-lg shadow-md flex items-center justify-between">
+                        <div><p class="text-sm font-medium text-gray-500">제출 완료</p><p class="text-3xl font-bold text-green-600">${data.summary_stats.total_completed}</p></div>
+                        <div class="bg-green-100 text-green-600 rounded-full p-3"><svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg></div>
+                    </div>
+                    <div class="bg-white p-6 rounded-lg shadow-md flex items-center justify-between">
+                        <div><p class="text-sm font-medium text-gray-500">미제출</p><p class="text-3xl font-bold text-red-600">${data.summary_stats.total_missing}</p></div>
+                        <div class="bg-red-100 text-red-600 rounded-full p-3"><svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg></div>
+                    </div>
+                `;
+
+                // 2. 클래스별 과제 제출율 차트
+                const chartsData = data.charts_data;
+                const chartDataByAssignment = chartsData.by_assignment;
+                const classSelector = document.getElementById('class-selector');
+                const byAssignmentCanvas = document.getElementById('by-assignment-chart').getContext('2d');
+                Object.keys(chartDataByAssignment).sort().forEach(className => {
+                    const option = document.createElement('option');
+                    option.value = className; option.textContent = className;
+                    classSelector.appendChild(option);
+                });
+                classSelector.addEventListener('change', (event) => {
+                    const selectedClass = event.target.value;
+                    const classData = chartDataByAssignment[selectedClass];
+                    if (byAssignmentChart) byAssignmentChart.destroy();
+                    if (!classData) return;
+                    byAssignmentChart = new Chart(byAssignmentCanvas, {
+                        type: 'bar', data: { labels: classData.map(d => d.assignment_name), datasets: [{ label: `${selectedClass} 제출율 (%)`, data: classData.map(d => d.submission_rate), backgroundColor: 'rgba(79, 70, 229, 0.8)' }] },
+                        options: { scales: { y: { beginAtZero: true, max: 100 } }, plugins: { tooltip: { callbacks: { label: (context) => ` ${context.raw}% (${classData[context.dataIndex].details})` } } } }
+                    });
+                });
+
+                // 3. 클래스별 종합 제출율 차트
+                const overallData = chartsData.overall_by_class.sort((a,b) => a.class_name.localeCompare(b.class_name));
+                const overallCanvas = document.getElementById('overall-by-class-chart').getContext('2d');
+                new Chart(overallCanvas, {
+                    type: 'bar', data: { labels: overallData.map(d => d.class_name), datasets: [{ label: '클래스 종합 제출율 (%)', data: overallData.map(d => d.rate), backgroundColor: 'rgba(5, 150, 105, 0.8)' }] },
+                    options: { indexAxis: 'y', scales: { x: { beginAtZero: true, max: 100 } }, plugins: { tooltip: { callbacks: { label: (context) => ` ${context.raw}% (${overallData[context.dataIndex].details})` } } } }
+                });
+                
+                // 4. 과제 성실 랭킹 리스트
+                populateRankList('top10-list', data.honor_rank.top10);
+                populateRankList('bottom10-list', data.honor_rank.bottom10);
+                
                 loadingIndicator.classList.add('hidden');
                 appContainer.classList.remove('hidden');
-            }
 
-            // --- 탭 전환 로직 ---
-            tabConfirmed.addEventListener('click', () => switchTab('confirmed'));
-            tabRejected.addEventListener('click', () => switchTab('rejected'));
-            searchInput.addEventListener('input', renderTables);
-
-            function switchTab(tabName) {
-                if (tabName === 'confirmed') {
-                    tabConfirmed.classList.add('active');
-                    tabRejected.classList.remove('active');
-                    confirmedView.classList.remove('hidden');
-                    rejectedView.classList.add('hidden');
-                } else {
-                    tabRejected.classList.add('active');
-                    tabConfirmed.classList.remove('active');
-                    rejectedView.classList.remove('hidden');
-                    confirmedView.classList.add('hidden');
-                }
-                searchInput.value = ''; // 탭 전환 시 검색어 초기화
-                renderTables();
-            }
-
-            // --- 테이블 렌더링 ---
-            function renderTables() {
-                renderConfirmedTable();
-                renderRejectedTable();
-            }
-
-            function renderConfirmedTable() {
-                const searchTerm = searchInput.value.toLowerCase();
-                const filtered = allConfirmed.filter(item => 
-                    Object.values(item).some(val => String(val).toLowerCase().includes(searchTerm))
-                );
-
-                confirmedTableBody.innerHTML = '';
-                if (filtered.length === 0) {
-                    confirmedTableBody.innerHTML = `<tr><td colspan="6" class="text-center py-10 text-gray-500">표시할 데이터가 없습니다.</td></tr>`;
-                    return;
-                }
-                filtered.forEach(item => {
-                    const row = document.createElement('tr');
-                    row.innerHTML = `
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${item['클래스']}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${item['이름']}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${item['과제명']}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-red-600">${item['오답문항'] || '-'}</td>
-                        <td class="px-6 py-4 text-sm text-gray-500">${item['메모'] || '-'}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${item['확인시간']}</td>
-                    `;
-                    confirmedTableBody.appendChild(row);
-                });
-            }
-
-            function renderRejectedTable() {
-                const searchTerm = searchInput.value.toLowerCase();
-                const filtered = allRejected.filter(item => 
-                    Object.values(item).some(val => String(val).toLowerCase().includes(searchTerm))
-                );
-
-                rejectedTableBody.innerHTML = '';
-                if (filtered.length === 0) {
-                    rejectedTableBody.innerHTML = `<tr><td colspan="5" class="text-center py-10 text-gray-500">표시할 데이터가 없습니다.</td></tr>`;
-                    return;
-                }
-                filtered.forEach(item => {
-                    const row = document.createElement('tr');
-                    row.innerHTML = `
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${item['클래스']}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">${item['이름']}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-900">${item['과제명']}</td>
-                        <td class="px-6 py-4 text-sm text-gray-500">${item['반려사유']}</td>
-                        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500">${item['반려시간']}</td>
-                    `;
-                    rejectedTableBody.appendChild(row);
-                });
+            } catch (error) {
+                loadingIndicator.innerHTML = `<p class="text-red-500 font-bold">데이터 로딩 실패!</p><p class="mt-1">${error.message}</p>`;
+                console.error('Error fetching admin data:', error);
             }
         });
     </script>
