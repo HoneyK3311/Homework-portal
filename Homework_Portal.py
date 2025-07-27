@@ -88,7 +88,8 @@ def send_sms_aligo(phone_number, message):
         print(f"🚨 SMS 발송 중 예외 발생: {e}")
 
 def run_worker():
-    print(f"⚙️  백그라운드 작업기 실행... (현재 시간: {datetime.now().strftime('%H:%M:%S')})")
+    kst_now = datetime.now() + timedelta(hours=9)
+    print(f"⚙️  백그라운드 작업기 실행... (현재 시간: {kst_now.strftime('%H:%M:%S')})")
     try:
         gc = authenticate_gsheets()
         source_sheet = gc.open_by_url(SOURCE_SHEET_URL)
