@@ -3,201 +3,264 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>마이 페이지</title>
+    <title>학생 리포트</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap" rel="stylesheet">
     <style>
-        .details-container { max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out; }
-        .loader { border: 4px solid #f3f3f3; border-top: 4px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+        body { font-family: 'Noto Sans KR', sans-serif; }
+        .loader { border: 5px solid #f3f3f3; border-top: 5px solid #4f46e5; border-radius: 50%; width: 50px; height: 50px; animation: spin 1s linear infinite; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .toggle-arrow { transition: transform 0.3s ease-out; }
+        .accordion-content { max-height: 0; overflow: hidden; transition: max-height 0.5s ease-in-out; }
     </style>
 </head>
 <body class="bg-gray-100">
 
-    <div id="loading-indicator" class="fixed inset-0 bg-white/70 backdrop-blur-sm flex flex-col justify-center items-center z-50">
+    <div id="loading-indicator" class="fixed inset-0 bg-white bg-opacity-75 flex flex-col justify-center items-center z-50">
         <div class="loader"></div>
-        <p class="mt-4 text-gray-600">데이터를 불러오는 중...</p>
+        <p class="mt-4 text-lg font-semibold text-gray-700">리포트 데이터를 불러오는 중...</p>
     </div>
 
-    <div id="app" class="max-w-xl mx-auto p-4 opacity-0 transition-opacity duration-300">
-        <header class="text-center my-6">
-            <h1 class="text-3xl font-bold text-gray-800"><span class="text-blue-600">{{ student_name }}</span> 학생 리포트</h1>
-            <p id="student-info" class="text-gray-500 mt-2"></p>
+    <div id="app" class="max-w-4xl mx-auto p-4 sm:p-6 lg:p-8 hidden">
+        <header class="flex justify-between items-center mb-8">
+            <h1 id="student-name-header" class="text-3xl font-bold text-gray-900"></h1>
+            <a href="/logout" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded transition-colors">
+                로그아웃
+            </a>
         </header>
 
-        <div class="bg-white rounded-xl shadow-md mb-6 overflow-hidden">
-            <div id="attendance-header" class="p-6 cursor-pointer flex justify-between items-center">
-                <div class="flex items-center min-w-0">
-                    <div class="w-16 h-16 mr-4 flex-shrink-0"><canvas id="attendance-chart"></canvas></div>
-                    <div class="min-w-0">
-                        <h2 class="text-xl font-bold">📅 출결 현황</h2>
-                        <div id="attendance-summary-text" class="text-sm font-semibold truncate"></div>
+        <main class="space-y-4">
+            <div class="bg-white rounded-xl shadow-sm">
+                <div class="accordion-header cursor-pointer p-6 flex justify-between items-center">
+                    <h2 class="text-xl font-bold flex items-center"><span class="mr-3 text-2xl">🗓️</span>출결 현황</h2>
+                    <span class="transform transition-transform duration-300">▼</span>
+                </div>
+                <div class="accordion-content">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 p-6 border-t">
+                        <div class="md:col-span-1 flex flex-col items-center justify-center">
+                             <div class="w-48 h-48"><canvas id="attendance-chart"></canvas></div>
+                             <p class="mt-4 text-center text-gray-600 text-sm">총 등원일: <strong id="total-attendance-days" class="font-bold"></strong>일</p>
+                        </div>
+                        <div class="md:col-span-2">
+                            <h3 class="font-bold text-lg mb-2">상세 내역</h3>
+                            <ul id="attendance-details" class="h-56 overflow-y-auto pr-2 space-y-2"></ul>
+                        </div>
                     </div>
                 </div>
-                <svg class="w-6 h-6 text-gray-400 toggle-arrow flex-shrink-0 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
             </div>
-            <div class="details-container"><div id="attendance-list" class="px-6 pb-6 pt-0 space-y-3"></div></div>
-        </div>
 
-        <div class="bg-white rounded-xl shadow-md mb-6 overflow-hidden">
-             <div id="assignment-header" class="p-6 cursor-pointer flex justify-between items-center">
-                <div class="flex items-center min-w-0">
-                    <div class="w-16 h-16 mr-4 flex-shrink-0"><canvas id="assignment-chart"></canvas></div>
-                    <div class="min-w-0">
-                        <h2 class="text-xl font-bold">📚 과제 제출 현황</h2>
-                        <div id="assignment-summary-text" class="text-sm font-semibold truncate"></div>
+            <div class="bg-white rounded-xl shadow-sm">
+                <div class="accordion-header cursor-pointer p-6 flex justify-between items-center">
+                    <h2 class="text-xl font-bold flex items-center"><span class="mr-3 text-2xl">📚</span>과제 제출 현황</h2>
+                    <span class="transform transition-transform duration-300">▼</span>
+                </div>
+                <div class="accordion-content">
+                     <div class="grid grid-cols-1 md:grid-cols-3 gap-6 p-6 border-t">
+                        <div class="md:col-span-1 flex flex-col items-center justify-center">
+                             <div class="w-48 h-48"><canvas id="assignment-chart"></canvas></div>
+                             <p class="mt-4 text-center text-gray-600 text-sm">총 과제: <strong id="total-assignments" class="font-bold"></strong>개</p>
+                        </div>
+                        <div class="md:col-span-2">
+                            <h3 class="font-bold text-lg mb-2">상세 내역 (최근 제출 순)</h3>
+                            <ul id="assignment-details" class="h-56 overflow-y-auto pr-2 space-y-2"></ul>
+                        </div>
                     </div>
                 </div>
-                <svg class="w-6 h-6 text-gray-400 toggle-arrow flex-shrink-0 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
             </div>
-            <div class="details-container"><div id="assignment-list" class="px-6 pb-6 pt-0 space-y-3"></div></div>
-        </div>
-        
-        <div class="bg-white rounded-xl shadow-md overflow-hidden">
-            <div id="clinic-header" class="p-6 cursor-pointer flex justify-between items-center">
-                <div class="flex items-center min-w-0">
-                    <div class="w-16 h-16 mr-4 flex-shrink-0"><canvas id="clinic-chart"></canvas></div>
-                    <div class="min-w-0">
-                        <h2 class="text-xl font-bold">✍️ 클리닉 현황</h2>
-                        <div id="clinic-summary-text" class="text-sm font-semibold truncate"></div>
-                    </div>
-                </div>
-                <svg class="w-6 h-6 text-gray-400 toggle-arrow flex-shrink-0 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-            </div>
-            <div class="details-container"><div id="clinic-list" class="px-6 pb-6 pt-0 space-y-3"></div></div>
-        </div>
 
-        <div class="mt-8 text-center">
-            <a href="/logout" class="bg-gray-500 text-white py-2 px-6 rounded-lg hover:bg-gray-600 transition">로그아웃</a>
-        </div>
+            <div class="bg-white rounded-xl shadow-sm">
+                <div class="accordion-header cursor-pointer p-6 flex justify-between items-center">
+                    <h2 class="text-xl font-bold flex items-center"><span class="mr-3 text-2xl">✍️</span>클리닉 현황</h2>
+                    <span class="transform transition-transform duration-300">▼</span>
+                </div>
+                <div class="accordion-content">
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 p-6 border-t">
+                        <div class="md:col-span-1 flex flex-col items-center justify-center">
+                             <div class="w-48 h-48"><canvas id="clinic-chart"></canvas></div>
+                              <p class="mt-4 text-center text-gray-600 text-sm">총 클리닉: <strong id="total-clinics" class="font-bold"></strong>회</p>
+                        </div>
+                        <div class="md:col-span-2">
+                            <h3 class="font-bold text-lg mb-2">상세 내역</h3>
+                            <ul id="clinic-details" class="h-56 overflow-y-auto pr-2 space-y-2"></ul>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
     </div>
 
-    <script>
-        document.addEventListener('DOMContentLoaded', async () => {
-            const loadingIndicator = document.getElementById('loading-indicator');
-            const appContainer = document.getElementById('app');
-            
-            const getStatusBadge = (status, type) => {
-                let color = 'gray';
-                if (type === 'attendance') {
-                    if (status === '출석' || status === '참석') color = 'green';
-                    if (status === '지각') color = 'yellow';
-                    if (status === '결석') color = 'red';
-                } else if (type === 'assignment') {
-                    if (status === '정상제출') color = 'green';
-                    if (status === '지각제출') color = 'yellow';
-                    if (status === '미제출') color = 'red';
-                    if (status === '반려') color = 'purple';
-                }
-                return `<span class="font-bold text-${color}-600">${status}</span>`;
-            };
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+    // --- DOM 요소 ---
+    const loadingIndicator = document.getElementById('loading-indicator');
+    const appContainer = document.getElementById('app');
+    const studentNameHeader = document.getElementById('student-name-header');
 
-            const createDoughnutChart = (canvasId, counts, colors, centerText) => {
-                const ctx = document.getElementById(canvasId).getContext('2d');
-                return new Chart(ctx, {
-                    type: 'doughnut',
-                    data: { datasets: [{ data: Object.values(counts), backgroundColor: Object.values(colors), borderWidth: 0 }], labels: Object.keys(counts) },
-                    options: { cutout: '70%', plugins: { legend: { display: false }, tooltip: { enabled: true } }, responsive: true, maintainAspectRatio: false },
-                    plugins: [{ beforeDraw: function(chart) { const {width, height, ctx} = chart; ctx.restore(); const fontSize = (height / 80).toFixed(2); ctx.font = `bold ${fontSize}em sans-serif`; ctx.textBaseline = "middle"; const textX = Math.round((width - ctx.measureText(centerText).width) / 2); const textY = height / 2; ctx.fillText(centerText, textX, textY); ctx.save(); } }]
-                });
-            };
+    // --- 데이터 렌더링 함수 ---
+    const renderData = (data) => {
+        studentNameHeader.textContent = `${data.student_info.학생이름} 학생 리포트`;
 
-            try {
-                const response = await fetch('/api/my_page_data');
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.error || "알 수 없는 오류");
+        // 1. 출결 현황
+        const attendanceSummary = data.attendance.summary;
+        const attendanceChartData = {
+            labels: ['출석', '지각', '결석', '확인요망'],
+            values: [
+                attendanceSummary['출석'] || 0,
+                attendanceSummary['지각'] || 0,
+                attendanceSummary['결석'] || 0,
+                attendanceSummary['확인요망'] || 0
+            ]
+        };
+        createDoughnutChart('attendance-chart', attendanceChartData.labels, attendanceChartData.values, "출결 현황");
+        document.getElementById('total-attendance-days').textContent = attendanceSummary.총일수 || 0;
+        renderList('attendance-details', data.attendance.details, item => `
+            <span class="font-semibold">${item.date}</span>
+            <span class="font-bold ${getStatusColor(item.status)}">${item.status}</span>
+        `);
 
-                document.getElementById('student-info').innerText = `클래스: ${data.student_info.클래스} | 학생번호: ${data.student_info.학생전화}`;
-
-                // --- 출결 ---
-                const attSummary = data.attendance.summary;
-                const attTotal = attSummary['총일수'] || 0;
-                const attPresent = attSummary['출석'] || 0;
-                const attLate = attSummary['지각'] || 0;
-                const attAbsent = attSummary['결석'] || 0;
-                const attRate = Math.round(((attPresent + attLate) / attTotal || 0) * 100);
-                document.getElementById('attendance-summary-text').innerHTML = `<span class="text-green-600">정상: ${attPresent}</span><span class="text-yellow-500 ml-2">지각: ${attLate}</span><span class="text-red-500 ml-2">결석: ${attAbsent}</span>`;
-                createDoughnutChart('attendance-chart', { '정상': attPresent, '지각': attLate, '결석': attAbsent }, { '정상': '#16a34a', '지각': '#f59e0b', '결석': '#dc2626' }, `${attRate}%`);
-                const attendanceList = document.getElementById('attendance-list');
-                if (data.attendance.details && data.attendance.details.length > 0) {
-                    attendanceList.innerHTML = data.attendance.details.map(item => `<div class="flex justify-between items-center bg-gray-50 p-3 rounded-lg"><span class="text-gray-700">${item.date}</span>${getStatusBadge(item.status, 'attendance')}</div>`).join('');
-                } else { attendanceList.innerHTML = '<p class="text-gray-500">기록이 없습니다.</p>'; }
-
-                // --- 과제 ---
-                const hwSummary = data.assignments.summary;
-                const hwTotalForRate = hwSummary['총과제_비율계산용'] || 0;
-                const hwOntime = hwSummary['정상제출'] || 0;
-                const hwLate = hwSummary['지각제출'] || 0;
-                const hwUnsubmitted = hwSummary['미제출'] || 0;
-                const hwRejected = hwSummary['반려'] || 0;
-                const hwSubmittedRate = Math.round(((hwOntime + hwLate) / hwTotalForRate || 0) * 100);
-                document.getElementById('assignment-summary-text').innerHTML = `<span class="text-green-600">정상: ${hwOntime}</span><span class="text-yellow-500 ml-2">지각: ${hwLate}</span><span class="text-red-500 ml-2">미제출: ${hwUnsubmitted}</span><span class="text-purple-600 ml-2">반려: ${hwRejected}</span>`;
-                createDoughnutChart('assignment-chart', { '정상': hwOntime, '지각': hwLate, '미제출': hwUnsubmitted, '반려': hwRejected }, { '정상': '#16a34a', '지각': '#f59e0b', '미제출': '#dc2626', '반려': '#9333ea' }, `${hwSubmittedRate}%`);
-                const assignmentList = document.getElementById('assignment-list');
-                const submitted = data.assignments.details.map(item => {
-                    let finalStatus = item['제출상태'];
-                    if (item['교사확인상태'] === '반려') finalStatus = '반려';
-                    return { name: item['과제 번호를 선택해주세요. (반드시 확인요망)'], status: finalStatus, content: item['과제내용'] || '', date: new Date(item['Submitted at KST']), teacher_status: item['교사확인상태'] || '미확인' };
-                });
-                const unsubmitted = data.assignments.unsubmitted.map(item => ({ name: item.과제명, status: '미제출', content: item.과제내용 || '', date: new Date(String(item.제출일시).split('(')[0]), teacher_status: '-' }));
-                const allAssignments = [...submitted, ...unsubmitted].sort((a, b) => b.date - a.date);
-                if (allAssignments.length > 0) {
-                    assignmentList.innerHTML = allAssignments.map(item => {
-                        let subtext = '';
-                        if (item.status !== '미제출') { subtext = `${item.content} | 제출: ${item.date.toLocaleString('ko-KR')} | 교사확인: ${item.teacher_status}`;
-                        } else { subtext = `${item.content}`; }
-                        return `<div class="bg-gray-50 p-3 rounded-lg"><div class="flex justify-between items-start"><span class="font-semibold">${item.name}</span>${getStatusBadge(item.status, 'assignment')}</div><div class="text-sm text-gray-500 mt-1">${subtext}</div></div>`;
-                    }).join('');
-                } else { assignmentList.innerHTML = '<p class="text-gray-500">기록이 없습니다.</p>'; }
-
-                // --- 클리닉 ---
-                const clinicSummary = data.clinic.summary;
-                const clinicTotal = clinicSummary['총클리닉'] || 0;
-                const clinicPresent = clinicSummary['출석'] || 0;
-                const clinicLate = clinicSummary['지각'] || 0;
-                const clinicAbsent = clinicSummary['결석'] || 0;
-                const clinicAttended = clinicPresent + clinicLate;
-                const clinicRate = Math.round((clinicAttended / clinicTotal || 0) * 100);
-                document.getElementById('clinic-summary-text').innerHTML = `<span class="text-green-600">참석: ${clinicAttended}</span><span class="text-red-500 ml-2">결석: ${clinicAbsent}</span>`;
-                createDoughnutChart('clinic-chart', { '참석': clinicAttended, '결석': clinicAbsent }, { '참석': '#16a34a', '결석': '#dc2626' }, `${clinicRate}%`);
-                const clinicList = document.getElementById('clinic-list');
-                if (data.clinic.details && data.clinic.details.length > 0) {
-                     clinicList.innerHTML = data.clinic.details.map(item => `<div class="bg-gray-50 p-3 rounded-lg"><div class="flex justify-between items-center"><p class="font-semibold">${item.날짜} <span class="text-sm text-gray-500 font-normal ml-2">(${item.종류 || '일반'})</span></p>${getStatusBadge(item.출결, 'attendance')}</div></div>`).join('');
-                } else { clinicList.innerHTML = '<p class="text-gray-500">기록이 없습니다.</p>'; }
-                
-                // --- 토글 이벤트 리스너 ---
-                ['attendance', 'assignment', 'clinic'].forEach(section => {
-                    const header = document.getElementById(`${section}-header`);
-                    header.addEventListener('click', () => {
-                        const container = header.nextElementSibling;
-                        const arrow = header.querySelector('.toggle-arrow');
-                        if (container.style.maxHeight) {
-                            container.style.maxHeight = null;
-                            arrow.style.transform = 'rotate(0deg)';
-                        } else {
-                            container.style.maxHeight = container.scrollHeight + "px";
-                            arrow.style.transform = 'rotate(180deg)';
-                        }
-                    });
-                });
-
-            } catch (error) {
-                console.error("Error fetching data:", error);
-                const errorMessage = `<p class="text-red-500">데이터를 불러오는 데 실패했습니다: ${error.message}</p>`;
-                ['attendance', 'assignment', 'clinic'].forEach(section => {
-                    const header = document.getElementById(`${section}-header`);
-                    if(header) { const container = header.nextElementSibling; if(container) container.innerHTML = errorMessage; }
-                });
-            } finally {
-                loadingIndicator.style.display = 'none';
-                appContainer.style.opacity = 1;
-            }
-
-            document.getElementById('logout-btn').addEventListener('click', () => {
-                window.location.href = '/logout';
-            });
+        // 2. 과제 현황
+        const assignmentSummary = data.assignments.summary;
+        const assignmentChartData = {
+            labels: ['정상제출', '지각제출', '미제출', '반려'],
+            values: [
+                assignmentSummary['정상제출'] || 0,
+                assignmentSummary['지각제출'] || 0,
+                assignmentSummary['미제출'] || 0,
+                assignmentSummary['반려'] || 0,
+            ]
+        };
+        createDoughnutChart('assignment-chart', assignmentChartData.labels, assignmentChartData.values, "과제 현황");
+        document.getElementById('total-assignments').textContent = assignmentSummary.총과제 || 0;
+        
+        // 제출 + 미제출 목록 합치고 정렬
+        const allAssignments = [
+            ...data.assignments.details.map(d => ({...d, type: '제출'})),
+            ...data.assignments.unsubmitted.map(d => ({...d, type: '미제출'}))
+        ].sort((a, b) => {
+            const dateA = a.type === '제출' ? new Date(a['Submitted at KST']) : new Date(a['제출일시'].split(' ')[0]);
+            const dateB = b.type === '제출' ? new Date(b['Submitted at KST']) : new Date(b['제출일시'].split(' ')[0]);
+            return dateB - dateA; // 최신순 정렬
         });
-    </script>
+
+        renderList('assignment-details', allAssignments, item => {
+             const name = item['과제 번호를 선택해주세요. (반드시 확인요망)'] || item['과제명'];
+             let status, statusColor;
+             if (item.type === '제출') {
+                 status = item['교사확인상태'] === '반려' ? '반려' : item['제출상태'];
+             } else {
+                 status = '미제출';
+             }
+             return `
+                <div class="flex-1">
+                    <p class="font-semibold">${name}</p>
+                    <p class="text-xs text-gray-500">${item.type === '제출' ? new Date(item['Submitted at KST']).toLocaleString() : `마감: ${item.제출일시}`}</p>
+                </div>
+                <span class="font-bold ${getStatusColor(status)}">${status}</span>
+             `
+        });
+
+
+        // 3. 클리닉 현황
+        const clinicSummary = data.clinic.summary;
+        const clinicChartData = {
+            labels: ['참석', '불참'],
+            values: [clinicSummary['참석'] || 0, clinicSummary['불참'] || 0]
+        };
+        createDoughnutChart('clinic-chart', clinicChartData.labels, clinicChartData.values, "클리닉 현황");
+        document.getElementById('total-clinics').textContent = clinicSummary.총클리닉 || 0;
+        renderList('clinic-details', data.clinic.details, item => `
+            <div class="flex-1">
+                <p class="font-semibold">${item.날짜}</p>
+                <p class="text-xs text-gray-500">담당: ${item.담당교사 || '미지정'}</p>
+            </div>
+            <span class="font-bold ${getStatusColor(item.출결)}">${item.출결}</span>
+        `);
+    };
+    
+    // --- 헬퍼 함수 ---
+    const createDoughnutChart = (canvasId, labels, data, title) => {
+        const ctx = document.getElementById(canvasId).getContext('2d');
+        new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: data,
+                    backgroundColor: ['#22c55e', '#facc15', '#ef4444', '#f97316', '#a8a29e', '#64748b'],
+                    borderColor: '#ffffff',
+                    borderWidth: 2,
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: true, position: 'bottom', labels: { boxWidth: 12, padding: 15 } },
+                    title: { display: false }
+                },
+                cutout: '60%'
+            }
+        });
+    };
+    
+    const renderList = (elementId, items, templateFn) => {
+        const listElement = document.getElementById(elementId);
+        listElement.innerHTML = '';
+        if (items.length === 0) {
+            listElement.innerHTML = `<li class="text-center text-gray-500 py-8">데이터가 없습니다.</li>`;
+            return;
+        }
+        items.forEach(item => {
+            const li = document.createElement('li');
+            li.className = 'flex justify-between items-center p-3 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors';
+            li.innerHTML = templateFn(item);
+            listElement.appendChild(li);
+        });
+    };
+
+    const getStatusColor = (status) => {
+        const colors = {
+            '출석': 'text-green-600', '정상제출': 'text-green-600', '참석': 'text-green-600',
+            '지각': 'text-yellow-600', '지각제출': 'text-yellow-600',
+            '결석': 'text-red-600', '미제출': 'text-red-600', '불참': 'text-red-600',
+            '반려': 'text-orange-500',
+            '확인요망': 'text-gray-500',
+        };
+        return colors[status] || 'text-gray-900';
+    };
+
+
+    // --- 이벤트 리스너 ---
+    const accordions = document.querySelectorAll('.accordion-header');
+    accordions.forEach(accordion => {
+        accordion.addEventListener('click', () => {
+            const content = accordion.nextElementSibling;
+            const arrow = accordion.querySelector('span');
+            
+            accordion.parentElement.classList.toggle('shadow-lg');
+            arrow.classList.toggle('rotate-180');
+
+            if (content.style.maxHeight) {
+                content.style.maxHeight = null;
+            } else {
+                content.style.maxHeight = content.scrollHeight + "px";
+            }
+        });
+    });
+
+    // --- 데이터 로딩 및 앱 초기화 ---
+    try {
+        const response = await fetch('/api/my_page_data');
+        if (!response.ok) throw new Error('데이터를 불러오는 데 실패했습니다.');
+        const data = await response.json();
+        renderData(data);
+    } catch (error) {
+        loadingIndicator.innerHTML = `<p class="text-red-500 font-bold">오류 발생!</p><p class="text-gray-600 mt-2">${error.message}</p>`;
+    } finally {
+        loadingIndicator.classList.add('hidden');
+        appContainer.classList.remove('hidden');
+    }
+});
+</script>
 </body>
 </html>
