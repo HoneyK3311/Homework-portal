@@ -78,7 +78,6 @@
             const loadingIndicator = document.getElementById('loading-indicator');
             const appContainer = document.getElementById('app');
             
-            // 상태에 따른 색상 클래스를 반환하는 함수
             const getStatusBadge = (status) => {
                 const colors = {
                     '출석': 'text-green-600', '참석': 'text-green-600', '정상제출': 'text-green-600',
@@ -89,7 +88,6 @@
                 return `<span class="font-bold ${colors[status] || 'text-gray-500'}">${status}</span>`;
             };
 
-            // 도넛 차트를 생성하는 함수
             const createDoughnutChart = (canvasId, counts, colors, centerText) => {
                 const ctx = document.getElementById(canvasId).getContext('2d');
                 return new Chart(ctx, {
@@ -105,7 +103,6 @@
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || "알 수 없는 오류");
 
-                // --- 학생 정보 ---
                 document.getElementById('student-name').innerText = data.student_info.학생이름;
                 document.getElementById('student-info').innerText = `클래스: ${data.student_info.클래스} | 학생전화: ${data.student_info.학생전화}`;
 
@@ -137,13 +134,12 @@
                 const submitted = data.assignments.details.map(item => ({
                     name: item['과제 번호를 선택해주세요. (반드시 확인요망)'],
                     status: item['교사확인상태'] === '반려' ? '반려' : item['제출상태'],
-                    date: new Date(item['Submitted at KST'])
+                    date: new Date(item['Submitted at KST']) // 'YYYY-MM-DD HH:mm:ss' 형태를 기대
                 }));
                 
-                // ## FIX 1: 미제출 과제의 날짜 형식을 'YYYY/MM/DD'로 변환하여 Date 객체 생성
                 const unsubmitted = data.assignments.unsubmitted.map(item => {
-                    const dateStr = String(item.제출일시).split('(')[0].trim();
-                    const fullDateStr = `${new Date().getFullYear()}/${dateStr}`;
+                    const dateStr = String(item.제출일시).split('(')[0].trim(); // '7/28 (월)' -> '7/28'
+                    const fullDateStr = `${new Date().getFullYear()}/${dateStr}`; // '2025/7/28'
                     return { name: item.과제명, status: '미제출', date: new Date(fullDateStr) };
                 });
                 
@@ -168,8 +164,8 @@
                 const clinicSummary = data.clinic.summary;
                 const clinicTotal = clinicSummary['총클리닉'] || 0;
                 const clinicPresent = clinicSummary['참석'] || 0;
-                const clinicLate = clinicSummary['지각'] || 0; // '지각' 키가 없을 수 있으므로 기본값 0 처리
-                const clinicAbsent = clinicSummary['결석'] || clinicSummary['불참'] || 0; // '결석' 또는 '불참' 사용
+                const clinicLate = clinicSummary['지각'] || 0;
+                const clinicAbsent = clinicSummary['결석'] || clinicSummary['불참'] || 0;
                 const clinicAttended = clinicPresent + clinicLate;
                 const clinicRate = Math.round((clinicAttended / clinicTotal || 0) * 100);
                 document.getElementById('clinic-summary-text').innerHTML = `<span class="text-green-600">참석: ${clinicAttended}</span><span class="text-red-500 ml-2">결석: ${clinicAbsent}</span>`;
@@ -203,9 +199,6 @@
                 loadingIndicator.style.display = 'none';
                 appContainer.style.opacity = 1;
             }
-
-            // ## FIX 2: 존재하지 않는 'logout-btn'에 대한 이벤트 리스너 제거
-            // 로그아웃은 a 태그의 href로 이미 잘 작동합니다.
         });
     </script>
 </body>

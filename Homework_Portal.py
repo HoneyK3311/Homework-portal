@@ -477,13 +477,11 @@ def get_my_page_data():
         today = datetime.now().date()
         current_year = today.year
 
-        # [수정 2] 출결 계산 안정성 강화
         attendance_book_sheet = student_db_spreadsheet.worksheet(f"출석부-{class_name}")
         official_dates = [val for val in attendance_book_sheet.col_values(1) if val != '날짜' and val != ''][1:]
         past_official_dates = []
         for d in official_dates:
             try:
-                # 날짜 형식이 잘못된 경우를 대비한 에러 처리
                 if d and datetime.strptime(d, "%Y-%m-%d").date() <= today:
                     past_official_dates.append(d)
             except ValueError:
@@ -514,13 +512,17 @@ def get_my_page_data():
         # --- 데이터 가공 및 요약 통계 계산 ---
         attendance_records = {row['날짜']: row['출결'] for index, row in student_attendance_df.iterrows()}
         final_attendance = [{"date": date_str, "status": attendance_records.get(date_str, "확인요망")} for date_str in past_official_dates]
-        attendance_summary = pd.Series([item['status'] for item in final_attendance]).value_counts().to_dict()
+        
+        # FIX 1: value_counts() 결과를 순수 Python dict로 변환
+        attendance_summary = {k: int(v) for k, v in pd.Series([item['status'] for item in final_attendance]).value_counts().to_dict().items()}
         attendance_summary['총일수'] = len(past_official_dates)
 
         student_clinic_df['datetime'] = pd.to_datetime(student_clinic_df['날짜'], format='%Y-%m-%d', errors='coerce')
         past_clinic_df = student_clinic_df[student_clinic_df['datetime'].dt.date <= today]
         clinic_records = past_clinic_df.sort_values(by='datetime', ascending=False).to_dict('records')
-        clinic_summary = past_clinic_df['출결'].value_counts().to_dict()
+        
+        # FIX 2: value_counts() 결과를 순수 Python dict로 변환
+        clinic_summary = {k: int(v) for k, v in past_clinic_df['출결'].value_counts().to_dict().items()}
         clinic_summary['총클리닉'] = len(past_clinic_df)
         
         student_submissions_df.loc[:, 'Submitted at KST'] = pd.to_datetime(student_submissions_df['Submitted at'], errors='coerce') + pd.Timedelta(hours=9)
@@ -529,9 +531,9 @@ def get_my_page_data():
         unsubmitted_assignments = past_due_assignments_df[~past_due_assignments_df['과제명'].isin(submitted_assignments)]
         unsubmitted_list = [{"과제명": name, "제출상태": "미제출", "제출일시": deadline} for name, deadline in zip(unsubmitted_assignments['과제명'], unsubmitted_assignments['제출기한'])]
         
-        # [수정 1] '반려'를 '교사확인상태' 열에서 카운트하도록 수정
-        assignment_summary = student_submissions_df['제출상태'].value_counts().to_dict()
-        rejected_count = (student_submissions_df['교사확인상태'] == '반려').sum()
+        # FIX 3: value_counts()와 .sum() 결과를 순수 Python int로 변환
+        assignment_summary = {k: int(v) for k, v in student_submissions_df['제출상태'].value_counts().to_dict().items()}
+        rejected_count = int((student_submissions_df['교사확인상태'] == '반려').sum())
         assignment_summary['반려'] = rejected_count
         
         assignment_summary['미제출'] = len(unsubmitted_assignments)
@@ -548,7 +550,10 @@ def get_my_page_data():
         return jsonify(page_data)
 
     except Exception as e:
+        # 에러 추적을 위해 traceback 추가
+        import traceback
         print(f"개인 페이지 데이터 생성 중 오류: {e}")
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 # ----------------------------------------------------------------
