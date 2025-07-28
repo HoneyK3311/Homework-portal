@@ -117,7 +117,7 @@
                 document.getElementById('attendance-summary-text').innerHTML = `<span class="text-green-600">정상: ${attPresent}</span><span class="text-yellow-500 ml-2">지각: ${attLate}</span><span class="text-red-500 ml-2">결석: ${attAbsent}</span>`;
                 createDoughnutChart('attendance-chart', { '정상': attPresent, '지각': attLate, '결석': attAbsent }, { '정상': '#16a34a', '지각': '#f59e0b', '결석': '#dc2626' }, `${attRate}%`);
                 const attendanceList = document.getElementById('attendance-list');
-                if (data.attendance.details.length > 0) {
+                if (data.attendance.details && data.attendance.details.length > 0) {
                     attendanceList.innerHTML = data.attendance.details.map(item => `<div class="flex justify-between items-center bg-gray-50 p-3 rounded-lg"><span class="text-gray-700">${item.date}</span>${getStatusBadge(item.status, 'attendance')}</div>`).join('');
                 } else { attendanceList.innerHTML = '<p class="text-gray-500">기록이 없습니다.</p>'; }
 
