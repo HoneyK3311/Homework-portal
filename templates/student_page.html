@@ -123,62 +123,46 @@
 
                 // --- 과제 ---
                 const hwSummary = data.assignments.summary;
-                const hwTotal = hwSummary['총과제_비율계산용'] || hwSummary['총과제'] || 0;
+                const hwTotalForRate = hwSummary['총과제_비율계산용'] || 0;
                 const hwOntime = hwSummary['정상제출'] || 0;
                 const hwLate = hwSummary['지각제출'] || 0;
                 const hwUnsubmitted = hwSummary['미제출'] || 0;
                 const hwRejected = hwSummary['반려'] || 0;
-                const hwSubmittedRate = Math.round(((hwOntime + hwLate) / hwTotal || 0) * 100);
+                const hwSubmittedRate = Math.round(((hwOntime + hwLate) / hwTotalForRate || 0) * 100);
                 document.getElementById('assignment-summary-text').innerHTML = `<span class="text-green-600">정상: ${hwOntime}</span><span class="text-yellow-500 ml-2">지각: ${hwLate}</span><span class="text-red-500 ml-2">미제출: ${hwUnsubmitted}</span><span class="text-purple-500 ml-2">반려: ${hwRejected}</span>`;
                 createDoughnutChart('assignment-chart', { '정상': hwOntime, '지각': hwLate, '미제출': hwUnsubmitted, '반려': hwRejected }, { '정상': '#16a34a', '지각': '#f59e0b', '미제출': '#dc2626', '반려': '#9333ea' }, `${hwSubmittedRate}%`);
                 const assignmentList = document.getElementById('assignment-list');
-                
-                // [수정] 제출된 과제 목록을 만들 때 '반려' 상태를 우선으로 적용
                 const submitted = data.assignments.details.map(item => {
                     let finalStatus = item['제출상태'];
-                    if (item['교사확인상태'] === '반려') {
-                        finalStatus = '반려';
-                    }
-                    return {
-                        name: item['과제 번호를 선택해주세요. (반드시 확인요망)'],
-                        status: finalStatus,
-                        content: item['과제내용'] || '',
-                        date: new Date(item['Submitted at KST']),
-                        teacher_status: item['교사확인상태'] || '미확인'
-                    };
+                    if (item['교사확인상태'] === '반려') finalStatus = '반려';
+                    return { name: item['과제 번호를 선택해주세요. (반드시 확인요망)'], status: finalStatus, content: item['과제내용'] || '', date: new Date(item['Submitted at KST']), teacher_status: item['교사확인상태'] || '미확인' };
                 });
-                
-                const unsubmitted = data.assignments.unsubmitted.map(item => ({
-                    name: item.과제명,
-                    status: '미제출',
-                    content: item.과제내용 || '',
-                    date: new Date(item.제출일시.split('(')[0].replace(/(\d{2})/, '2025/')),
-                    teacher_status: '-'
-                }));
-
+                const unsubmitted = data.assignments.unsubmitted.map(item => ({ name: item.과제명, status: '미제출', content: item.과제내용 || '', date: new Date(item.제출일시.split('(')[0].replace(/(\d{2})/, '2025/')), teacher_status: '-' }));
                 const allAssignments = [...submitted, ...unsubmitted].sort((a, b) => b.date - a.date);
-
                 if (allAssignments.length > 0) {
                     assignmentList.innerHTML = allAssignments.map(item => {
                         let subtext = '';
-                        if (item.status !== '미제출') {
-                            subtext = `${item.content} | 제출: ${item.date.toLocaleString('ko-KR')} | 교사확인: ${item.teacher_status}`;
-                        } else {
-                            subtext = `${item.content}`;
-                        }
-                        return `
-                            <div class="bg-gray-50 p-3 rounded-lg">
-                                <div class="flex justify-between items-start">
-                                    <span class="font-semibold">${item.name}</span>
-                                    ${getStatusBadge(item.status, 'assignment')}
-                                </div>
-                                <div class="text-sm text-gray-500 mt-1">${subtext}</div>
-                            </div>`;
+                        if (item.status !== '미제출') { subtext = `${item.content} | 제출: ${item.date.toLocaleString('ko-KR')} | 교사확인: ${item.teacher_status}`;
+                        } else { subtext = `${item.content}`; }
+                        return `<div class="bg-gray-50 p-3 rounded-lg"><div class="flex justify-between items-start"><span class="font-semibold">${item.name}</span>${getStatusBadge(item.status, 'assignment')}</div><div class="text-sm text-gray-500 mt-1">${subtext}</div></div>`;
                     }).join('');
-                } else {
-                    assignmentList.innerHTML = '<p class="text-gray-500">기록이 없습니다.</p>';
-                }
+                } else { assignmentList.innerHTML = '<p class="text-gray-500">기록이 없습니다.</p>'; }
 
+                // --- 클리닉 ---
+                const clinicSummary = data.clinic.summary;
+                const clinicTotal = clinicSummary['총클리닉'] || 0;
+                const clinicPresent = clinicSummary['출석'] || 0;
+                const clinicLate = clinicSummary['지각'] || 0;
+                const clinicAbsent = clinicSummary['결석'] || 0;
+                const clinicAttended = clinicPresent + clinicLate;
+                const clinicRate = Math.round((clinicAttended / clinicTotal || 0) * 100);
+                document.getElementById('clinic-summary-text').innerHTML = `<span class="text-green-600">참석: ${clinicAttended}</span><span class="text-red-500 ml-2">결석: ${clinicAbsent}</span>`;
+                createDoughnutChart('clinic-chart', { '참석': clinicAttended, '결석': clinicAbsent }, { '참석': '#16a34a', '결석': '#dc2626' }, `${clinicRate}%`);
+                const clinicList = document.getElementById('clinic-list');
+                if (data.clinic.details.length > 0) {
+                     clinicList.innerHTML = data.clinic.details.map(item => `<div class="bg-gray-50 p-3 rounded-lg"><div class="flex justify-between items-center"><p class="font-semibold">${item.날짜} <span class="text-sm text-gray-500 font-normal ml-2">(${item.종류 || '일반'})</span></p>${getStatusBadge(item.출결, 'attendance')}</div></div>`).join('');
+                } else { clinicList.innerHTML = '<p class="text-gray-500">기록이 없습니다.</p>'; }
+                
                 // --- 토글 이벤트 리스너 ---
                 ['attendance', 'assignment', 'clinic'].forEach(section => {
                     const header = document.getElementById(`${section}-header`);
@@ -206,6 +190,7 @@
                 loadingIndicator.style.display = 'none';
                 appContainer.style.opacity = 1;
             }
+
             document.getElementById('logout-btn').addEventListener('click', () => {
                 window.location.href = '/logout';
             });
