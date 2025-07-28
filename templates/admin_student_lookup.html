@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>학생 리포트 조회</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-100 flex items-center justify-center h-screen">
+    <div class="w-full max-w-md bg-white p-8 rounded-lg shadow-md">
+        <h1 class="text-2xl font-bold text-center mb-6">학생 리포트 조회 (관리자용)</h1>
+        <div class="space-y-4">
+            <div>
+                <label for="class-selector" class="block text-gray-700 mb-2">클래스 선택</label>
+                <select id="class-selector" class="w-full p-2 border rounded-md">
+                    <option value="">-- 클래스를 선택하세요 --</option>
+                </select>
+            </div>
+            <div>
+                <label for="student-selector" class="block text-gray-700 mb-2">학생 선택</label>
+                <select id="student-selector" class="w-full p-2 border rounded-md" disabled>
+                    <option value="">-- 학생을 선택하세요 --</option>
+                </select>
+            </div>
+            <button id="view-report-btn" class="w-full bg-indigo-600 text-white p-3 rounded-lg hover:bg-indigo-700 disabled:bg-gray-400" disabled>
+                리포트 보기
+            </button>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            const classSelector = document.getElementById('class-selector');
+            const studentSelector = document.getElementById('student-selector');
+            const viewBtn = document.getElementById('view-report-btn');
+
+            // 1. 서버에서 전체 학생 목록 가져오기
+            const response = await fetch('/api/get_all_students');
+            const studentsByClass = await response.json();
+            const classNames = Object.keys(studentsByClass).sort();
+
+            // 2. 클래스 드롭다운 채우기
+            classNames.forEach(className => {
+                const option = document.createElement('option');
+                option.value = className;
+                option.textContent = className;
+                classSelector.appendChild(option);
+            });
+
+            // 3. 클래스 선택 시 학생 드롭다운 업데이트
+            classSelector.addEventListener('change', () => {
+                studentSelector.innerHTML = '<option value="">-- 학생을 선택하세요 --</option>';
+                const selectedClass = classSelector.value;
+                
+                if (selectedClass) {
+                    studentSelector.disabled = false;
+                    const students = studentsByClass[selectedClass].sort();
+                    students.forEach(studentName => {
+                        const option = document.createElement('option');
+                        option.value = studentName;
+                        option.textContent = studentName;
+                        studentSelector.appendChild(option);
+                    });
+                } else {
+                    studentSelector.disabled = true;
+                    viewBtn.disabled = true;
+                }
+            });
+
+            // 4. 학생 선택 시 버튼 활성화
+            studentSelector.addEventListener('change', () => {
+                viewBtn.disabled = !studentSelector.value;
+            });
+
+            // 5. 리포트 보기 버튼 클릭 시
+            viewBtn.addEventListener('click', async () => {
+                const studentName = studentSelector.value;
+                if (!studentName) return;
+
+                const apiResponse = await fetch('/api/admin_view_student', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: studentName })
+                });
+
+                if (apiResponse.ok) {
+                    window.open('/my_page', '_blank');
+                } else {
+                    alert('학생 페이지를 여는 데 실패했습니다. 다시 로그인해주세요.');
+                }
+            });
+        });
+    </script>
+</body>
+</html>

@@ -392,7 +392,42 @@ def get_admin_dashboard_data():
 # ----------------------------------------------------------------
 @app.route('/login')
 def login_page():
+    # 세션을 확인하여 관리자일 경우, 학생 선택 페이지를 보여줌
+    if session.get('user_role') == 'admin':
+        return render_template('admin_student_lookup.html')
+    
+    # 그 외의 경우(로그인 안 했거나, 학생)는 기존 학생 로그인 페이지를 보여줌
     return render_template('login.html')
+
+@app.route('/api/get_all_students')
+def get_all_students():
+    # 관리자만 이 API를 사용할 수 있도록 권한 확인
+    if session.get('user_role') != 'admin':
+        return jsonify({"error": "Unauthorized"}), 403
+
+    gc = authenticate_gsheets()
+    roster_sheet = gc.open_by_key(STUDENT_DB_ID).worksheet(STUDENT_DB_WORKSHEET_NAME)
+    roster_df = get_sheet_as_df(roster_sheet)
+    
+    # '등록중'인 학생만 필터링
+    active_students = roster_df[roster_df['현재상태'] == '등록중']
+    
+    # 클래스별로 학생 이름 그룹핑
+    students_by_class = active_students.groupby('클래스')['학생이름'].apply(list).to_dict()
+    
+    return jsonify(students_by_class)
+
+@app.route('/api/admin_view_student', methods=['POST'])
+def admin_view_student():
+    if session.get('user_role') != 'admin':
+        return jsonify({"success": False, "message": "권한이 없습니다."}), 403
+
+    data = request.json
+    student_name = data.get('name')
+
+    # 학생 페이지가 해당 학생의 정보를 로드할 수 있도록 세션 설정
+    session['student_name'] = student_name
+    return jsonify({"success": True})
 
 @app.route('/api/login', methods=['POST'])
 def handle_login():
