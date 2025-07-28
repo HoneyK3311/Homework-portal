@@ -28,48 +28,48 @@
 
         <div class="bg-white rounded-xl shadow-md mb-6 overflow-hidden">
             <div id="attendance-header" class="p-6 cursor-pointer flex justify-between items-center">
-                <div class="flex items-center">
-                    <div class="w-16 h-16 mr-4"><canvas id="attendance-chart"></canvas></div>
-                    <div>
+                <div class="flex items-center min-w-0">
+                    <div class="w-16 h-16 mr-4 flex-shrink-0"><canvas id="attendance-chart"></canvas></div>
+                    <div class="min-w-0">
                         <h2 class="text-xl font-bold">📅 출결 현황</h2>
-                        <div id="attendance-summary-text" class="text-sm font-semibold"></div>
+                        <div id="attendance-summary-text" class="text-sm font-semibold truncate"></div>
                     </div>
                 </div>
-                <svg class="w-6 h-6 text-gray-400 toggle-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                <svg class="w-6 h-6 text-gray-400 toggle-arrow flex-shrink-0 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
             </div>
             <div class="details-container"><div id="attendance-list" class="px-6 pb-6 pt-0 space-y-3"></div></div>
         </div>
 
         <div class="bg-white rounded-xl shadow-md mb-6 overflow-hidden">
              <div id="assignment-header" class="p-6 cursor-pointer flex justify-between items-center">
-                <div class="flex items-center">
-                    <div class="w-16 h-16 mr-4"><canvas id="assignment-chart"></canvas></div>
-                    <div>
+                <div class="flex items-center min-w-0">
+                    <div class="w-16 h-16 mr-4 flex-shrink-0"><canvas id="assignment-chart"></canvas></div>
+                    <div class="min-w-0">
                         <h2 class="text-xl font-bold">📚 과제 제출 현황</h2>
-                        <div id="assignment-summary-text" class="text-sm font-semibold"></div>
+                        <div id="assignment-summary-text" class="text-sm font-semibold truncate"></div>
                     </div>
                 </div>
-                <svg class="w-6 h-6 text-gray-400 toggle-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                <svg class="w-6 h-6 text-gray-400 toggle-arrow flex-shrink-0 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
             </div>
             <div class="details-container"><div id="assignment-list" class="px-6 pb-6 pt-0 space-y-3"></div></div>
         </div>
         
         <div class="bg-white rounded-xl shadow-md overflow-hidden">
             <div id="clinic-header" class="p-6 cursor-pointer flex justify-between items-center">
-                <div class="flex items-center">
-                    <div class="w-16 h-16 mr-4"><canvas id="clinic-chart"></canvas></div>
-                    <div>
+                <div class="flex items-center min-w-0">
+                    <div class="w-16 h-16 mr-4 flex-shrink-0"><canvas id="clinic-chart"></canvas></div>
+                    <div class="min-w-0">
                         <h2 class="text-xl font-bold">✍️ 클리닉 현황</h2>
-                        <div id="clinic-summary-text" class="text-sm font-semibold"></div>
+                        <div id="clinic-summary-text" class="text-sm font-semibold truncate"></div>
                     </div>
                 </div>
-                <svg class="w-6 h-6 text-gray-400 toggle-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                <svg class="w-6 h-6 text-gray-400 toggle-arrow flex-shrink-0 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
             </div>
             <div class="details-container"><div id="clinic-list" class="px-6 pb-6 pt-0 space-y-3"></div></div>
         </div>
 
         <div class="mt-8 text-center">
-            <button id="logout-btn" class="bg-gray-500 text-white py-2 px-6 rounded-lg hover:bg-gray-600">로그아웃</button>
+            <a href="/logout" class="bg-gray-500 text-white py-2 px-6 rounded-lg hover:bg-gray-600 transition">로그아웃</a>
         </div>
     </div>
 
@@ -87,15 +87,18 @@
                 } else if (type === 'assignment') {
                     if (status === '정상제출') color = 'green';
                     if (status === '지각제출') color = 'yellow';
-                    if (status === '미제출' || status === '반려') color = 'red';
-                    if (status === '확인완료') color = 'blue';
+                    if (status === '미제출') color = 'red';
+                    if (status === '반려') color = 'purple';
                 }
                 return `<span class="font-bold text-${color}-600">${status}</span>`;
             };
 
             const createDoughnutChart = (canvasId, counts, colors, centerText) => {
                 const ctx = document.getElementById(canvasId).getContext('2d');
-                new Chart(ctx, { type: 'doughnut', data: { datasets: [{ data: Object.values(counts), backgroundColor: Object.values(colors), borderWidth: 0 }], labels: Object.keys(counts) }, options: { cutout: '70%', plugins: { legend: { display: false }, tooltip: { enabled: true } }, responsive: true, maintainAspectRatio: false },
+                return new Chart(ctx, {
+                    type: 'doughnut',
+                    data: { datasets: [{ data: Object.values(counts), backgroundColor: Object.values(colors), borderWidth: 0 }], labels: Object.keys(counts) },
+                    options: { cutout: '70%', plugins: { legend: { display: false }, tooltip: { enabled: true } }, responsive: true, maintainAspectRatio: false },
                     plugins: [{ beforeDraw: function(chart) { const {width, height, ctx} = chart; ctx.restore(); const fontSize = (height / 80).toFixed(2); ctx.font = `bold ${fontSize}em sans-serif`; ctx.textBaseline = "middle"; const textX = Math.round((width - ctx.measureText(centerText).width) / 2); const textY = height / 2; ctx.fillText(centerText, textX, textY); ctx.save(); } }]
                 });
             };
@@ -129,7 +132,7 @@
                 const hwUnsubmitted = hwSummary['미제출'] || 0;
                 const hwRejected = hwSummary['반려'] || 0;
                 const hwSubmittedRate = Math.round(((hwOntime + hwLate) / hwTotalForRate || 0) * 100);
-                document.getElementById('assignment-summary-text').innerHTML = `<span class="text-green-600">정상: ${hwOntime}</span><span class="text-yellow-500 ml-2">지각: ${hwLate}</span><span class="text-red-500 ml-2">미제출: ${hwUnsubmitted}</span><span class="text-purple-500 ml-2">반려: ${hwRejected}</span>`;
+                document.getElementById('assignment-summary-text').innerHTML = `<span class="text-green-600">정상: ${hwOntime}</span><span class="text-yellow-500 ml-2">지각: ${hwLate}</span><span class="text-red-500 ml-2">미제출: ${hwUnsubmitted}</span><span class="text-purple-600 ml-2">반려: ${hwRejected}</span>`;
                 createDoughnutChart('assignment-chart', { '정상': hwOntime, '지각': hwLate, '미제출': hwUnsubmitted, '반려': hwRejected }, { '정상': '#16a34a', '지각': '#f59e0b', '미제출': '#dc2626', '반려': '#9333ea' }, `${hwSubmittedRate}%`);
                 const assignmentList = document.getElementById('assignment-list');
                 const submitted = data.assignments.details.map(item => {
@@ -137,7 +140,7 @@
                     if (item['교사확인상태'] === '반려') finalStatus = '반려';
                     return { name: item['과제 번호를 선택해주세요. (반드시 확인요망)'], status: finalStatus, content: item['과제내용'] || '', date: new Date(item['Submitted at KST']), teacher_status: item['교사확인상태'] || '미확인' };
                 });
-                const unsubmitted = data.assignments.unsubmitted.map(item => ({ name: item.과제명, status: '미제출', content: item.과제내용 || '', date: new Date(item.제출일시.split('(')[0].replace(/(\d{2})/, '2025/')), teacher_status: '-' }));
+                const unsubmitted = data.assignments.unsubmitted.map(item => ({ name: item.과제명, status: '미제출', content: item.과제내용 || '', date: new Date(String(item.제출일시).split('(')[0]), teacher_status: '-' }));
                 const allAssignments = [...submitted, ...unsubmitted].sort((a, b) => b.date - a.date);
                 if (allAssignments.length > 0) {
                     assignmentList.innerHTML = allAssignments.map(item => {
@@ -159,7 +162,7 @@
                 document.getElementById('clinic-summary-text').innerHTML = `<span class="text-green-600">참석: ${clinicAttended}</span><span class="text-red-500 ml-2">결석: ${clinicAbsent}</span>`;
                 createDoughnutChart('clinic-chart', { '참석': clinicAttended, '결석': clinicAbsent }, { '참석': '#16a34a', '결석': '#dc2626' }, `${clinicRate}%`);
                 const clinicList = document.getElementById('clinic-list');
-                if (data.clinic.details.length > 0) {
+                if (data.clinic.details && data.clinic.details.length > 0) {
                      clinicList.innerHTML = data.clinic.details.map(item => `<div class="bg-gray-50 p-3 rounded-lg"><div class="flex justify-between items-center"><p class="font-semibold">${item.날짜} <span class="text-sm text-gray-500 font-normal ml-2">(${item.종류 || '일반'})</span></p>${getStatusBadge(item.출결, 'attendance')}</div></div>`).join('');
                 } else { clinicList.innerHTML = '<p class="text-gray-500">기록이 없습니다.</p>'; }
                 
