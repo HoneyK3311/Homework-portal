@@ -51,7 +51,11 @@
                 </div>
                 <svg class="w-6 h-6 text-gray-400 toggle-arrow flex-shrink-0 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
             </div>
-            <div class="details-container"><div id="assignment-list" class="px-6 pb-6 pt-0 space-y-3"></div></div>
+            <div id="rejected-assignment-section" class="px-6 pt-4 hidden">
+                <h3 class="font-bold text-orange-600 mb-2">📢 반려된 과제 (확인 후 다시 제출하세요)</h3>
+                <div id="rejected-assignment-list" class="space-y-3"></div>
+            </div>
+            <div class="details-container"><div id="assignment-list" class="px-6 pb-6 pt-4 border-t border-gray-200 mt-4 space-y-3"></div></div>
         </div>
         
         <div class="bg-white rounded-xl shadow-md overflow-hidden">
@@ -80,10 +84,10 @@
             
             const getStatusBadge = (status) => {
                 const colors = {
-                    '출석': 'text-green-600', '참석': 'text-green-600', '정상제출': 'text-green-600',
+                    '정상': 'text-green-600', '정상제출': 'text-green-600',
                     '지각': 'text-yellow-600', '지각제출': 'text-yellow-600',
-                    '결석': 'text-red-600', '미제출': 'text-red-600',
-                    '반려': 'text-purple-600'
+                    '결석': 'text-red-500', '미제출': 'text-red-500',
+                    '반려': 'text-orange-600'
                 };
                 return `<span class="font-bold ${colors[status] || 'text-gray-500'}">${status}</span>`;
             };
@@ -106,81 +110,77 @@
                 document.getElementById('student-name').innerText = data.student_info.학생이름;
                 document.getElementById('student-info').innerText = `클래스: ${data.student_info.클래스} | 학생전화: ${data.student_info.학생전화}`;
 
-                // --- 출결 ---
+                // --- 1) & 2) & 3) 출결/클리닉 현황 로직 수정 ---
                 const attSummary = data.attendance.summary;
-                const attTotal = attSummary['총일수'] || 0;
-                const attPresent = attSummary['출석'] || 0;
+                const attNormal = attSummary['정상'] || 0;
                 const attLate = attSummary['지각'] || 0;
                 const attAbsent = attSummary['결석'] || 0;
-                const attRate = Math.round(((attPresent + attLate) / attTotal || 0) * 100);
-                document.getElementById('attendance-summary-text').innerHTML = `<span class="text-green-600">출석: ${attPresent}</span><span class="text-yellow-500 ml-2">지각: ${attLate}</span><span class="text-red-500 ml-2">결석: ${attAbsent}</span>`;
-                createDoughnutChart('attendance-chart', { '출석': attPresent, '지각': attLate, '결석': attAbsent }, { '출석': '#16a34a', '지각': '#f59e0b', '결석': '#dc2626' }, `${attRate}%`);
+                const attDenominator = attNormal + attLate + attAbsent;
+                const attRate = Math.round(((attNormal + attLate) / attDenominator || 0) * 100);
+                document.getElementById('attendance-summary-text').innerHTML = `<span class="text-green-600">정상: ${attNormal}</span><span class="text-yellow-500 ml-2">지각: ${attLate}</span><span class="text-red-500 ml-2">결석: ${attAbsent}</span>`;
+                createDoughnutChart('attendance-chart', { '정상': attNormal, '지각': attLate, '결석': attAbsent }, { '정상': '#16a34a', '지각': '#f59e0b', '결석': '#dc2626' }, `${attRate}%`);
                 const attendanceList = document.getElementById('attendance-list');
                 if (data.attendance.details && data.attendance.details.length > 0) {
                     attendanceList.innerHTML = data.attendance.details.map(item => `<div class="flex justify-between items-center bg-gray-50 p-3 rounded-lg"><span class="text-gray-700">${item.date}</span>${getStatusBadge(item.status)}</div>`).join('');
                 } else { attendanceList.innerHTML = '<p class="text-gray-500 text-center py-2">기록이 없습니다.</p>'; }
 
-                // --- 과제 ---
-                const hwSummary = data.assignments.summary;
-                const hwTotalForRate = hwSummary['총과제_비율계산용'] || 0;
-                const hwOntime = hwSummary['정상제출'] || 0;
-                const hwLate = hwSummary['지각제출'] || 0;
-                const hwUnsubmitted = hwSummary['미제출'] || 0;
-                const hwRejected = hwSummary['반려'] || 0;
-                const hwSubmittedRate = Math.round(((hwOntime + hwLate) / hwTotalForRate || 0) * 100);
-                document.getElementById('assignment-summary-text').innerHTML = `<span class="text-green-600">정상: ${hwOntime}</span><span class="text-yellow-500 ml-2">지각: ${hwLate}</span><span class="text-red-500 ml-2">미제출: ${hwUnsubmitted}</span><span class="text-purple-600 ml-2">반려: ${hwRejected}</span>`;
-                createDoughnutChart('assignment-chart', { '정상': hwOntime, '지각': hwLate, '미제출': hwUnsubmitted, '반려': hwRejected }, { '정상': '#16a34a', '지각': '#f59e0b', '미제출': '#dc2626', '반려': '#9333ea' }, `${hwSubmittedRate}%`);
-                
-                const submitted = data.assignments.details.map(item => ({
-                    name: item['과제 번호를 선택해주세요. (반드시 확인요망)'],
-                    status: item['교사확인상태'] === '반려' ? '반려' : item['제출상태'],
-                    date: new Date(item['Submitted at KST']) // 'YYYY-MM-DD HH:mm:ss' 형태를 기대
-                }));
-                
-                const unsubmitted = data.assignments.unsubmitted.map(item => {
-                    const dateStr = String(item.제출일시).split('(')[0].trim(); // '7/28 (월)' -> '7/28'
-                    const fullDateStr = `${new Date().getFullYear()}/${dateStr}`; // '2025/7/28'
-                    return { name: item.과제명, status: '미제출', date: new Date(fullDateStr) };
-                });
-                
-                const allAssignments = [...submitted, ...unsubmitted].sort((a, b) => b.date - a.date);
-                const assignmentList = document.getElementById('assignment-list');
-                if (allAssignments.length > 0) {
-                    assignmentList.innerHTML = allAssignments.map(item => `
-                        <div class="bg-gray-50 p-3 rounded-lg">
-                            <div class="flex justify-between items-start">
-                                <span class="font-semibold">${item.name}</span>
-                                ${getStatusBadge(item.status)}
-                            </div>
-                            <div class="text-sm text-gray-500 mt-1">
-                                ${item.status !== '미제출' ? `제출: ${item.date.toLocaleString('ko-KR')}` : `마감: ${item.date.toLocaleDateString('ko-KR')}`}
-                            </div>
-                        </div>
-                    `).join('');
-                } else { assignmentList.innerHTML = '<p class="text-gray-500 text-center py-2">기록이 없습니다.</p>'; }
-
-
-                // --- 클리닉 ---
                 const clinicSummary = data.clinic.summary;
-                const clinicTotal = clinicSummary['총클리닉'] || 0;
-                const clinicPresent = clinicSummary['참석'] || 0;
+                const clinicNormal = clinicSummary['정상'] || 0;
                 const clinicLate = clinicSummary['지각'] || 0;
-                const clinicAbsent = clinicSummary['결석'] || clinicSummary['불참'] || 0;
-                const clinicAttended = clinicPresent + clinicLate;
-                const clinicRate = Math.round((clinicAttended / clinicTotal || 0) * 100);
-                document.getElementById('clinic-summary-text').innerHTML = `<span class="text-green-600">참석: ${clinicAttended}</span><span class="text-red-500 ml-2">결석: ${clinicAbsent}</span>`;
-                createDoughnutChart('clinic-chart', { '참석': clinicAttended, '결석': clinicAbsent }, { '참석': '#16a34a', '결석': '#dc2626' }, `${clinicRate}%`);
+                const clinicAbsent = clinicSummary['결석'] || 0;
+                const clinicTotal = clinicNormal + clinicLate + clinicAbsent;
+                const clinicRate = Math.round(((clinicNormal + clinicLate) / clinicTotal || 0) * 100);
+                document.getElementById('clinic-summary-text').innerHTML = `<span class="text-green-600">참석: ${clinicNormal + clinicLate}</span><span class="text-red-500 ml-2">결석: ${clinicAbsent}</span>`;
+                createDoughnutChart('clinic-chart', { '참석': (clinicNormal + clinicLate), '결석': clinicAbsent }, { '참석': '#16a34a', '결석': '#dc2626' }, `${clinicRate}%`);
                 const clinicList = document.getElementById('clinic-list');
                 if (data.clinic.details && data.clinic.details.length > 0) {
                      clinicList.innerHTML = data.clinic.details.map(item => `<div class="bg-gray-50 p-3 rounded-lg"><div class="flex justify-between items-center"><p class="font-semibold">${item.날짜}</p>${getStatusBadge(item.출결)}</div></div>`).join('');
                 } else { clinicList.innerHTML = '<p class="text-gray-500 text-center py-2">기록이 없습니다.</p>'; }
                 
+                // --- 4) & 5) 과제 현황 로직 수정 ---
+                const hwSummary = data.assignments.summary;
+                const hwOntime = hwSummary['정상제출'] || 0;
+                const hwLate = hwSummary['지각제출'] || 0;
+                const hwUnsubmitted = hwSummary['미제출'] || 0;
+                const hwDenominator = hwOntime + hwLate + hwUnsubmitted;
+                const hwSubmittedRate = Math.round(((hwOntime + hwLate) / hwDenominator || 0) * 100);
+                document.getElementById('assignment-summary-text').innerHTML = `<span class="text-green-600">정상: ${hwOntime}</span><span class="text-yellow-500 ml-2">지각: ${hwLate}</span><span class="text-red-500 ml-2">미제출: ${hwUnsubmitted}</span>`;
+                createDoughnutChart('assignment-chart', { '정상': hwOntime, '지각': hwLate, '미제출': hwUnsubmitted }, { '정상': '#16a34a', '지각': '#f59e0b', '미제출': '#dc2626' }, `${hwSubmittedRate}%`);
                 
+                // 5-1) 반려된 과제 목록 별도 표시
+                const rejectedSection = document.getElementById('rejected-assignment-section');
+                const rejectedList = document.getElementById('rejected-assignment-list');
+                if (data.assignments.rejected && data.assignments.rejected.length > 0) {
+                    rejectedSection.classList.remove('hidden');
+                    rejectedList.innerHTML = data.assignments.rejected.map(item => `
+                        <div class="bg-orange-50 p-3 rounded-lg">
+                           <div class="flex justify-between items-start">
+                                <span class="font-semibold">${item['과제 번호를 선택해주세요. (반드시 확인요망)']}</span>
+                                ${getStatusBadge('반려')}
+                            </div>
+                        </div>
+                    `).join('');
+                }
+                
+                // 5-2) 반려를 제외한 나머지 과제 목록 처리
+                const submitted = data.assignments.details.map(item => ({ name: item['과제 번호를 선택해주세요. (반드시 확인요망)'], status: item['제출상태'], date: new Date(item['Submitted at KST']) }));
+                const unsubmitted = data.assignments.unsubmitted.map(item => { const dateStr = String(item.제출일시).split('(')[0].trim(); return { name: item.과제명, status: '미제출', date: new Date(`${new Date().getFullYear()}/${dateStr}`) }; });
+                const allAssignments = [...submitted, ...unsubmitted].sort((a, b) => b.date - a.date);
+                const assignmentList = document.getElementById('assignment-list');
+                if (allAssignments.length > 0) {
+                    assignmentList.innerHTML = allAssignments.map(item => `
+                        <div class="bg-gray-50 p-3 rounded-lg"> <div class="flex justify-between items-start"> <span class="font-semibold">${item.name}</span> ${getStatusBadge(item.status)} </div> <div class="text-sm text-gray-500 mt-1"> ${item.status !== '미제출' ? `제출: ${item.date.toLocaleString('ko-KR')}` : `마감: ${item.date.toLocaleDateString('ko-KR')}`} </div> </div>
+                    `).join('');
+                } else { assignmentList.innerHTML = '<p class="text-gray-500 text-center py-2">기록이 없습니다.</p>'; }
+
                 // --- 토글 이벤트 리스너 ---
                 ['attendance', 'assignment', 'clinic'].forEach(section => {
                     const header = document.getElementById(`${section}-header`);
                     header.addEventListener('click', () => {
-                        const container = header.nextElementSibling;
+                        const container = header.nextElementSibling.nextElementSibling; // 반려 섹션 때문에 nextElementSibling을 두번 호출
+                         if (section === 'attendance' || section === 'clinic') {
+                            container = header.nextElementSibling;
+                        }
                         const arrow = header.querySelector('.toggle-arrow');
                         if (container.style.maxHeight) {
                             container.style.maxHeight = null;

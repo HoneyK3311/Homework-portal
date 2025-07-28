@@ -466,7 +466,6 @@ def get_my_page_data():
     try:
         gc = authenticate_gsheets()
         
-        # --- 학생 정보 및 정규 등원일/과제 마감일 가져오기 ---
         student_db_spreadsheet = gc.open_by_key(STUDENT_DB_ID)
         roster_sheet = student_db_spreadsheet.worksheet(STUDENT_DB_WORKSHEET_NAME)
         roster_df = get_sheet_as_df(roster_sheet)
@@ -511,46 +510,46 @@ def get_my_page_data():
         
         # --- 데이터 가공 및 요약 통계 계산 ---
         attendance_records = {row['날짜']: row['출결'] for index, row in student_attendance_df.iterrows()}
-        final_attendance = [{"date": date_str, "status": attendance_records.get(date_str, "확인요망")} for date_str in past_official_dates]
-        
-        # FIX 1: value_counts() 결과를 순수 Python dict로 변환
+        final_attendance = [{"date": date_str, "status": attendance_records.get(date_str, "결석")} for date_str in past_official_dates]
         attendance_summary = {k: int(v) for k, v in pd.Series([item['status'] for item in final_attendance]).value_counts().to_dict().items()}
         attendance_summary['총일수'] = len(past_official_dates)
 
         student_clinic_df['datetime'] = pd.to_datetime(student_clinic_df['날짜'], format='%Y-%m-%d', errors='coerce')
         past_clinic_df = student_clinic_df[student_clinic_df['datetime'].dt.date <= today]
         clinic_records = past_clinic_df.sort_values(by='datetime', ascending=False).to_dict('records')
-        
-        # FIX 2: value_counts() 결과를 순수 Python dict로 변환
         clinic_summary = {k: int(v) for k, v in past_clinic_df['출결'].value_counts().to_dict().items()}
         clinic_summary['총클리닉'] = len(past_clinic_df)
         
         student_submissions_df.loc[:, 'Submitted at KST'] = pd.to_datetime(student_submissions_df['Submitted at'], errors='coerce') + pd.Timedelta(hours=9)
-        assignment_records = student_submissions_df.sort_values(by='Submitted at KST', ascending=False).to_dict('records')
-        submitted_assignments = student_submissions_df['과제 번호를 선택해주세요. (반드시 확인요망)'].unique()
+        
+        # FIX: "반려" 로직 수정. 반려된 과제를 분리하고 계산에서 제외
+        rejected_submissions_df = student_submissions_df[student_submissions_df['교사확인상태'] == '반려']
+        non_rejected_submissions_df = student_submissions_df[student_submissions_df['교사확인상태'] != '반려']
+
+        assignment_records = non_rejected_submissions_df.sort_values(by='Submitted at KST', ascending=False).to_dict('records')
+        rejected_assignment_records = rejected_submissions_df.sort_values(by='Submitted at KST', ascending=False).to_dict('records')
+        
+        submitted_assignments = non_rejected_submissions_df['과제 번호를 선택해주세요. (반드시 확인요망)'].unique()
         unsubmitted_assignments = past_due_assignments_df[~past_due_assignments_df['과제명'].isin(submitted_assignments)]
         unsubmitted_list = [{"과제명": name, "제출상태": "미제출", "제출일시": deadline} for name, deadline in zip(unsubmitted_assignments['과제명'], unsubmitted_assignments['제출기한'])]
         
-        # FIX 3: value_counts()와 .sum() 결과를 순수 Python int로 변환
-        assignment_summary = {k: int(v) for k, v in student_submissions_df['제출상태'].value_counts().to_dict().items()}
-        rejected_count = int((student_submissions_df['교사확인상태'] == '반려').sum())
-        assignment_summary['반려'] = rejected_count
-        
+        assignment_summary = {k: int(v) for k, v in non_rejected_submissions_df['제출상태'].value_counts().to_dict().items()}
         assignment_summary['미제출'] = len(unsubmitted_assignments)
-        total_due_for_rate = len(past_due_assignments_df) - rejected_count
-        assignment_summary['총과제_비율계산용'] = total_due_for_rate
-        assignment_summary['총과제'] = len(past_due_assignments_df)
-        
+
         page_data = {
             "student_info": student_info_series.iloc[0].to_dict(),
             "attendance": {"summary": attendance_summary, "details": sorted(final_attendance, key=lambda x: x['date'], reverse=True)},
-            "assignments": {"summary": assignment_summary, "details": assignment_records, "unsubmitted": unsubmitted_list},
+            "assignments": {
+                "summary": assignment_summary, 
+                "details": assignment_records, 
+                "unsubmitted": unsubmitted_list,
+                "rejected": rejected_assignment_records # 반려 목록 추가
+            },
             "clinic": {"summary": clinic_summary, "details": clinic_records},
         }
         return jsonify(page_data)
 
     except Exception as e:
-        # 에러 추적을 위해 traceback 추가
         import traceback
         print(f"개인 페이지 데이터 생성 중 오류: {e}")
         traceback.print_exc()
