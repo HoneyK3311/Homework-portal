@@ -94,15 +94,27 @@
                 } else { attendanceList.innerHTML = '<p class="text-gray-500">기록이 없습니다.</p>'; }
 
                 const hwSummary = data.assignments.summary;
-                const hwTotalForRate = hwSummary['총과제_비율계산용'] || 0; // 비율 계산용 총량 사용
+                const hwTotalForRate = hwSummary['총과제_비율계산용'] || 0; // '반려' 제외된 총량
                 const hwOntime = hwSummary['정상제출'] || 0;
                 const hwLate = hwSummary['지각제출'] || 0;
                 const hwUnsubmitted = hwSummary['미제출'] || 0;
+                const hwRejected = hwSummary['반려'] || 0; // 반려 횟수 추가
                 const hwSubmittedRate = Math.round(((hwOntime + hwLate) / hwTotalForRate || 0) * 100); // 수정된 공식 적용
                 
-                document.getElementById('assignment-summary-text').innerHTML = `<span class="text-green-600">정상: ${hwOntime}</span><span class="text-yellow-500 ml-2">지각: ${hwLate}</span><span class="text-red-500 ml-2">미제출: ${hwUnsubmitted}</span>`;
-                createDoughnutChart('assignment-chart', { '정상': hwOntime, '지각': hwLate, '미제출': hwUnsubmitted }, { '정상': '#16a34a', '지각': '#f59e0b', '미제출': '#dc2626' }, `${hwSubmittedRate}%`);
-    
+                // 요약 텍스트에 '반려' 추가
+                document.getElementById('assignment-summary-text').innerHTML = `
+                    <span class="text-green-600">정상: ${hwOntime}</span>
+                    <span class="text-yellow-500 ml-2">지각: ${hwLate}</span>
+                    <span class="text-red-500 ml-2">미제출: ${hwUnsubmitted}</span>
+                    <span class="text-purple-500 ml-2">반려: ${hwRejected}</span>`;
+                
+                // 차트에 '반려' 데이터 추가
+                createDoughnutChart(
+                    'assignment-chart', 
+                    { '정상': hwOntime, '지각': hwLate, '미제출': hwUnsubmitted, '반려': hwRejected }, 
+                    { '정상': '#16a34a', '지각': '#f59e0b', '미제출': '#dc2626', '반려': '#9333ea' }, 
+                    `${hwSubmittedRate}%`
+                );
                 const assignmentList = document.getElementById('assignment-list');
                 const allAssignments = [...data.assignments.details.map(item => ({ name: item['과제 번호를 선택해주세요. (반드시 확인요망)'], status: item['제출상태'], date: new Date(item['Submitted at KST']), teacher_status: item['교사확인상태'] || '미확인' })), ...data.assignments.unsubmitted.map(item => ({ name: item.과제명, status: '미제출', date: new Date(item.제출일시.split('(')[0].replace(/(\d{2})/, '2025/')), teacher_status: '-' }))].sort((a, b) => b.date - a.date);
                 if (allAssignments.length > 0) {
