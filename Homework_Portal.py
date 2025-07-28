@@ -466,6 +466,7 @@ def get_my_page_data():
     try:
         gc = authenticate_gsheets()
         
+        # --- 학생 정보 및 정규 등원일/과제 마감일 가져오기 ---
         student_db_spreadsheet = gc.open_by_key(STUDENT_DB_ID)
         roster_sheet = student_db_spreadsheet.worksheet(STUDENT_DB_WORKSHEET_NAME)
         roster_df = get_sheet_as_df(roster_sheet)
@@ -476,19 +477,25 @@ def get_my_page_data():
         today = datetime.now().date()
         current_year = today.year
 
+        # [수정 2] 출결 계산 안정성 강화
         attendance_book_sheet = student_db_spreadsheet.worksheet(f"출석부-{class_name}")
         official_dates = [val for val in attendance_book_sheet.col_values(1) if val != '날짜' and val != ''][1:]
-        past_official_dates = [d for d in official_dates if d and datetime.strptime(d, "%Y-%m-%d").date() <= today]
+        past_official_dates = []
+        for d in official_dates:
+            try:
+                # 날짜 형식이 잘못된 경우를 대비한 에러 처리
+                if d and datetime.strptime(d, "%Y-%m-%d").date() <= today:
+                    past_official_dates.append(d)
+            except ValueError:
+                print(f"경고: '출석부-{class_name}' 시트에서 잘못된 날짜 형식 발견 - '{d}'")
+                continue
 
         source_sheet = gc.open_by_url(SOURCE_SHEET_URL)
         deadline_sheet = source_sheet.worksheet(DEADLINE_WORKSHEET_NAME)
         deadlines_df = get_sheet_as_df(deadline_sheet)
-        
-        # ★★★★★ 수정된 부분 ★★★★★
-        # 더 안정적인 코드로 날짜 처리 로직 변경
         deadlines_df['기한_날짜'] = deadlines_df['제출기한'].astype(str).str.extract(r'(\d{1,2}/\d{1,2})')
-        deadlines_df.dropna(subset=['기한_날짜'], inplace=True) # 날짜 정보가 없는 행은 제거
-        deadlines_df['제출마감_datetime'] = pd.to_datetime(f'{current_year}/' + deadlines_df['기한_날짜'], format='%Y/%m/%d', errors='coerce')
+        deadlines_df.dropna(subset=['기한_날짜'], inplace=True)
+        deadlines_df['제출마감_datetime'] = pd.to_datetime(str(current_year) + '/' + deadlines_df['기한_날짜'], format='%Y/%m/%d', errors='coerce')
         past_due_assignments_df = deadlines_df[(deadlines_df['클래스'] == class_name) & (deadlines_df['제출마감_datetime'].dt.date < today)]
 
         record_spreadsheet = gc.open_by_key(TARGET_SHEET_ID)
@@ -504,6 +511,7 @@ def get_my_page_data():
         submissions_df = get_sheet_as_df(submission_sheet)
         student_submissions_df = submissions_df[submissions_df['이름을 입력해주세요. (띄어쓰기 금지)'] == student_name].copy()
         
+        # --- 데이터 가공 및 요약 통계 계산 ---
         attendance_records = {row['날짜']: row['출결'] for index, row in student_attendance_df.iterrows()}
         final_attendance = [{"date": date_str, "status": attendance_records.get(date_str, "확인요망")} for date_str in past_official_dates]
         attendance_summary = pd.Series([item['status'] for item in final_attendance]).value_counts().to_dict()
@@ -520,16 +528,16 @@ def get_my_page_data():
         submitted_assignments = student_submissions_df['과제 번호를 선택해주세요. (반드시 확인요망)'].unique()
         unsubmitted_assignments = past_due_assignments_df[~past_due_assignments_df['과제명'].isin(submitted_assignments)]
         unsubmitted_list = [{"과제명": name, "제출상태": "미제출", "제출일시": deadline} for name, deadline in zip(unsubmitted_assignments['과제명'], unsubmitted_assignments['제출기한'])]
-        assignment_summary = student_submissions_df['제출상태'].value_counts().to_dict()
         
-        # 1. 반려된 과제는 제출률 계산에서 제외
-        rejected_count = assignment_summary.get('반려', 0)
-        total_assignments_for_rate = len(past_due_assignments_df) - rejected_count
+        # [수정 1] '반려'를 '교사확인상태' 열에서 카운트하도록 수정
+        assignment_summary = student_submissions_df['제출상태'].value_counts().to_dict()
+        rejected_count = (student_submissions_df['교사확인상태'] == '반려').sum()
+        assignment_summary['반려'] = rejected_count
         
         assignment_summary['미제출'] = len(unsubmitted_assignments)
+        total_due_for_rate = len(past_due_assignments_df) - rejected_count
+        assignment_summary['총과제_비율계산용'] = total_due_for_rate
         assignment_summary['총과제'] = len(past_due_assignments_df)
-        assignment_summary['총과제_비율계산용'] = total_assignments_for_rate # 비율 계산용 총량을 새로 추가
-
         
         page_data = {
             "student_info": student_info_series.iloc[0].to_dict(),
@@ -538,6 +546,7 @@ def get_my_page_data():
             "clinic": {"summary": clinic_summary, "details": clinic_records},
         }
         return jsonify(page_data)
+
     except Exception as e:
         print(f"개인 페이지 데이터 생성 중 오류: {e}")
         return jsonify({"error": str(e)}), 500
