@@ -359,6 +359,48 @@ def update_status():
         import traceback
         traceback.print_exc()
         return jsonify({"success": False, "message": str(e)}), 500
+    
+    # Homework_Portal.py 파일의 채점 페이지 관련 API 영역에 추가하세요.
+
+@app.route('/api/get_result_details')
+def get_result_details():
+    if session.get('user_role') not in ['teacher', 'admin']:
+        return jsonify({"error": "Unauthorized"}), 403
+
+    submission_id = request.args.get('id')
+    if not submission_id:
+        return jsonify({"error": "Submission ID is required"}), 400
+
+    try:
+        gc = authenticate_gsheets()
+        target_sheet = gc.open_by_key(TARGET_SHEET_ID)
+        worksheet = target_sheet.worksheet("과제제출현황")
+
+        df = get_sheet_as_df(worksheet)
+
+        if df.empty or '과제ID' not in df.columns:
+             return jsonify({"error": "Grading data not found or sheet is malformed"}), 404
+
+        result_row = df[df['과제ID'] == submission_id]
+
+        if result_row.empty:
+            return jsonify({"error": "해당 과제에 대한 채점 기록을 찾을 수 없습니다."}), 404
+
+        # DataFrame의 첫 번째 행을 사전(dict)으로 변환
+        details = result_row.iloc[0].to_dict()
+
+        # 프론트엔드가 기대하는 데이터 형식으로 가공
+        response_data = {
+            "memo": details.get("메모확인", ""),
+            "wrongProblemTexts": details.get("오답문항", "")
+        }
+
+        return jsonify(response_data)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 # ----------------------------------------------------------------
 # --- 관리자 페이지 (admin.html) 관련 API ---
