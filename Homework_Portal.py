@@ -654,6 +654,8 @@ def staff_logout():
 
 # Homework_Portal.py 파일에서 기존 sync 함수를 찾아 이 코드로 교체하세요.
 
+# Homework_Portal.py 파일에서 기존 sync 함수를 찾아 이 코드로 교체하세요.
+
 @app.route('/sync')
 def sync_graded_data():
     if session.get('user_role') != 'admin':
@@ -670,30 +672,23 @@ def sync_graded_data():
         rejected_worksheet = target_sheet.worksheet("과제반려현황")
         rejected_df = get_sheet_as_df(rejected_worksheet)
 
-        # --- FIX: 데이터 비교 전, 공백 제거 및 문자열 타입 통일 ---
-        # 각 DataFrame에 ID 열이 있는지 먼저 확인
-        if 'Submission ID' not in submissions_df.columns:
-            return "<h1>오류: '(탈리)과제제출' 시트에서 'Submission ID' 컬럼을 찾을 수 없습니다.</h1>", 500
-        if '과제ID' not in graded_df.columns:
-            return "<h1>오류: '과제제출현황' 시트에서 '과제ID' 컬럼을 찾을 수 없습니다.</h1>", 500
-        if '과제ID' not in rejected_df.columns:
-            return "<h1>오류: '과제반려현황' 시트에서 '과제ID' 컬럼을 찾을 수 없습니다.</h1>", 500
+        # ID 컬럼 존재 여부 확인
+        if 'Submission ID' not in submissions_df.columns or '과제ID' not in graded_df.columns or '과제ID' not in rejected_df.columns:
+            return "<h1>오류: ID 컬럼('Submission ID' 또는 '과제ID')을 찾을 수 없습니다. 시트 헤더를 확인해주세요.</h1>", 500
 
-        # ID를 모두 문자열로 변환하고, 양 끝의 공백을 제거합니다.
-        submissions_df['Submission ID'] = submissions_df['Submission ID'].astype(str).str.strip()
-        graded_df['과제ID'] = graded_df['과제ID'].astype(str).str.strip()
-        rejected_df['과제ID'] = rejected_df['과제ID'].astype(str).str.strip()
-        # --- FIX END ---
+        # 데이터 정제: ID를 모두 문자열로 변환하고, 공백 제거, 소문자로 통일하여 비교 정확도 향상
+        submissions_df['Clean ID'] = submissions_df['Submission ID'].astype(str).str.strip().str.lower()
+        graded_df['Clean ID'] = graded_df['과제ID'].astype(str).str.strip().str.lower()
+        rejected_df['Clean ID'] = rejected_df['과제ID'].astype(str).str.strip().str.lower()
         
-        existing_submission_ids = set(submissions_df['Submission ID'])
+        existing_submission_ids = set(submissions_df['Clean ID'])
         header_tally = source_worksheet.row_values(1)
-        
         new_rows_to_add = []
 
-        # 1. '확인완료'된 과제 동기화
         if not graded_df.empty:
-            missing_graded_df = graded_df[~graded_df['과제ID'].isin(existing_submission_ids)]
+            missing_graded_df = graded_df[~graded_df['Clean ID'].isin(existing_submission_ids)]
             for index, row in missing_graded_df.iterrows():
+                # ... (이하 로직은 이전과 동일)
                 submitted_at = row.get('시간')
                 new_row = {h: '' for h in header_tally}
                 new_row['Submission ID'] = row.get('과제ID')
@@ -705,10 +700,10 @@ def sync_graded_data():
                 new_row['교사확인상태'] = '확인완료'
                 new_rows_to_add.append([new_row.get(h, '') for h in header_tally])
 
-        # 2. '반려'된 과제 동기화
         if not rejected_df.empty:
-            missing_rejected_df = rejected_df[~rejected_df['과제ID'].isin(existing_submission_ids)]
+            missing_rejected_df = rejected_df[~rejected_df['Clean ID'].isin(existing_submission_ids)]
             for index, row in missing_rejected_df.iterrows():
+                # ... (이하 로직은 이전과 동일)
                 submitted_at = row.get('반려시간')
                 new_row = {h: '' for h in header_tally}
                 new_row['Submission ID'] = row.get('과제ID')
@@ -724,7 +719,6 @@ def sync_graded_data():
             return "<h1>동기화 완료: 누락된 데이터가 없습니다.</h1>", 200
         
         source_worksheet.append_rows(new_rows_to_add, value_input_option='USER_ENTERED')
-        
         return f"<h1>동기화 완료: 총 {len(new_rows_to_add)}개의 누락된 데이터(확인완료, 반려 포함)를 (탈리)과제제출 시트에 추가했습니다.</h1>", 200
 
     except Exception as e:
@@ -732,6 +726,56 @@ def sync_graded_data():
         traceback.print_exc()
         return f"동기화 중 오류 발생: {e}", 500
 
+
+@app.route('/debug_sync')
+def debug_sync_data():
+    if session.get('user_role') != 'admin':
+        return "권한이 없습니다.", 403
+
+    try:
+        gc = authenticate_gsheets()
+        
+        # 1. 각 시트 데이터 불러오기
+        source_worksheet = gc.open_by_url(SOURCE_SHEET_URL).worksheet(SOURCE_WORKSHEET_NAME)
+        submissions_df = get_sheet_as_df(source_worksheet)
+        
+        target_sheet = gc.open_by_key(TARGET_SHEET_ID)
+        graded_worksheet = target_sheet.worksheet("과제제출현황")
+        graded_df = get_sheet_as_df(graded_worksheet)
+        rejected_worksheet = target_sheet.worksheet("과제반려현황")
+        rejected_df = get_sheet_as_df(rejected_worksheet)
+
+        # 2. ID 데이터 정제 (공백 제거, 소문자 변환)
+        tally_ids = set(submissions_df['Submission ID'].astype(str).str.strip().str.lower())
+        graded_ids = set(graded_df['과제ID'].astype(str).str.strip().str.lower())
+        rejected_ids = set(rejected_df['과제ID'].astype(str).str.strip().str.lower())
+
+        # 3. 누락된 ID 찾기
+        missing_from_graded = graded_ids - tally_ids
+        missing_from_rejected = rejected_ids - tally_ids
+
+        # 4. 결과 출력
+        output = "<h1>동기화 데이터 진단 결과</h1>"
+        output += f"<p><b>(탈리)과제제출 시트 ID 개수:</b> {len(tally_ids)}개</p>"
+        output += f"<p><b>과제제출현황 시트 ID 개수:</b> {len(graded_ids)}개</p>"
+        output += f"<p><b>과제반려현황 시트 ID 개수:</b> {len(rejected_ids)}개</p>"
+        output += "<hr>"
+        output += f"<h2>(탈리)과제제출 시트에 누락된 ID 목록 (과제제출현황 기준):</h2>"
+        if missing_from_graded:
+            output += "<ul>" + "".join(f"<li>{id}</li>" for id in missing_from_graded) + "</ul>"
+        else:
+            output += "<p>없음</p>"
+        
+        output += f"<h2>(탈리)과제제출 시트에 누락된 ID 목록 (과제반려현황 기준):</h2>"
+        if missing_from_rejected:
+            output += "<ul>" + "".join(f"<li>{id}</li>" for id in missing_from_rejected) + "</ul>"
+        else:
+            output += "<p>없음</p>"
+            
+        return output
+
+    except Exception as e:
+        return f"진단 중 오류 발생: {e}", 500
 
 # ----------------------------------------------------------------
 # --- 백그라운드 작업 시작 (Gunicorn이 인식하도록 전역 범위에 위치) ---
