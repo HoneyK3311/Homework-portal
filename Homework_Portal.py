@@ -9,10 +9,14 @@ import requests
 import time as thread_time
 import threading
 from flask import Flask, jsonify, render_template, request, session, redirect, url_for
+import pytz
 
 # --- Flask 앱 초기화 ---
 app = Flask(__name__, template_folder='templates')
 app.secret_key = 'a_very_secret_and_secure_key_for_session_final' # 세션용 비밀키
+
+# FIX: 알림이 발송된 마지막 날짜를 기록할 변수 추가
+LAST_NOTIFICATION_DATE = None
 
 # --- 전역 설정 ---
 SERVICE_ACCOUNT_FILE = 'sheets_service.json'
@@ -87,10 +91,14 @@ def send_sms_aligo(phone_number, message):
     except Exception as e:
         print(f"🚨 SMS 발송 중 예외 발생: {e}")
 
+# Homework_Portal.py 파일에서 이 함수를 찾아 교체하세요.
+
 def run_worker():
-    kst_now = datetime.now() + timedelta(hours=9)
-    print(f"⚙️  백그라운드 작업기 실행... (현재 시간: {kst_now.strftime('%H:%M:%S')})")
+    # --- 1. 새로운 과제 처리 ---
     try:
+        kst_now_for_submission = datetime.now(pytz.timezone('Asia/Seoul'))
+        print(f"⚙️  백그라운드 작업기 실행... (현재 시간: {kst_now_for_submission.strftime('%H:%M:%S')})")
+        
         gc = authenticate_gsheets()
         source_sheet = gc.open_by_url(SOURCE_SHEET_URL)
         submission_worksheet = source_sheet.worksheet(SOURCE_WORKSHEET_NAME)
@@ -101,99 +109,99 @@ def run_worker():
         deadlines_df = get_sheet_as_df(deadline_worksheet)
         roster_df = get_sheet_as_df(roster_sheet)
 
-        if submissions_df.empty: return print("✅ [Worker] 처리할 과제가 없습니다.")
-        unprocessed_submissions = submissions_df[submissions_df['제출상태'] == ''].copy()
-        if unprocessed_submissions.empty: return print("✅ [Worker] 새로운 과제가 없습니다.")
-
-        print(f"✨ [Worker] {len(unprocessed_submissions)}개의 새로운 과제를 발견했습니다.")
-        
-        # 날짜 비교를 위해 제출기한 데이터를 미리 가공
-        current_year = datetime.now().year
-        deadlines_df['제출기한_날짜'] = deadlines_df['제출기한'].str.extract(r'(\d{1,2}/\d{1,2})')
-        deadlines_df['제출마감_datetime'] = pd.to_datetime(
-            f'{current_year}/' + deadlines_df['제출기한_날짜'], format='%Y/%m/%d', errors='coerce'
-        ) + pd.to_timedelta('23 hours 59 minutes 59 seconds')
-
-        for index, row in unprocessed_submissions.iterrows():
-            row_index_in_sheet = index + 2
-            submitted_at_kst = pd.to_datetime(row['Submitted at'], errors='coerce') + pd.Timedelta(hours=9)
-            student_name = row['이름을 입력해주세요. (띄어쓰기 금지)']
-            student_class = row['클래스를 선택해주세요.']
-            assignment_name = row['과제 번호를 선택해주세요. (반드시 확인요망)']
-
-            # 지각 여부 판단
-            deadline_info = deadlines_df[(deadlines_df['클래스'] == student_class) & (deadlines_df['과제명'] == assignment_name)]
-            status = "정상제출" if not deadline_info.empty and submitted_at_kst <= deadline_info.iloc[0]['제출마감_datetime'] else "지각제출"
-            
-            # 시트 업데이트
-            header = submission_worksheet.row_values(1)
-            submission_status_col = header.index('제출상태') + 1
-            teacher_status_col = header.index('교사확인상태') + 1
-            submission_worksheet.update_cell(row_index_in_sheet, submission_status_col, status)
-            submission_worksheet.update_cell(row_index_in_sheet, teacher_status_col, '미확인')
-            print(f"  - {row_index_in_sheet}행: '{status}' / '미확인' 업데이트 완료")
-
-            # SMS 발송
-            student_info = roster_df[(roster_df['학생이름'] == student_name) & (roster_df['클래스'] == student_class)]
-            if not student_info.empty:
-                phone_number = str(student_info.iloc[0]['학생전화'])
-                if phone_number:
-                    message = f"[김한이수학] {assignment_name} 제출 완료! ({status})"
-                    send_sms_aligo(phone_number, message)
+        if submissions_df.empty: 
+            print("✅ [Worker] 처리할 과제가 없습니다.")
+        else:
+            unprocessed_submissions = submissions_df[submissions_df['제출상태'] == ''].copy()
+            if unprocessed_submissions.empty: 
+                print("✅ [Worker] 새로운 과제가 없습니다.")
             else:
-                print(f"⚠️ {student_class}의 {student_name} 학생을 학생DB에서 찾을 수 없습니다.")
-        
-        print("✅ [Worker] 모든 새로운 과제 처리를 완료했습니다.")
-    except Exception as e:
-        print(f"🚨 [Worker] 작업 중 오류 발생: {e}")
+                print(f"✨ [Worker] {len(unprocessed_submissions)}개의 새로운 과제를 발견했습니다.")
+                current_year = datetime.now().year
+                deadlines_df['제출기한_날짜'] = deadlines_df['제출기한'].str.extract(r'(\d{1,2}/\d{1,2})')
+                deadlines_df['제출마감_datetime'] = pd.to_datetime(f'{current_year}/' + deadlines_df['제출기한_날짜'], format='%Y/%m/%d', errors='coerce') + pd.to_timedelta('23 hours 59 minutes 59 seconds')
 
-    # --- 2. 매일 오전 9시에 미제출 알림 발송 (신규 추가) ---
-    kst_now = datetime.now() + timedelta(hours=9) 
-    # 매일 오전 9시 ~ 9시 1분 사이에 한 번만 실행되도록 조건 설정
-    if kst_now.hour == 9 and 0 <= kst_now.minute < 1:
-        print("\n✨ 미제출 과제 알림 발송 시간입니다. 작업을 시작합니다.")
+                for index, row in unprocessed_submissions.iterrows():
+                    row_index_in_sheet = index + 2
+                    submitted_at_utc = pd.to_datetime(row['Submitted at'], errors='coerce')
+                    submitted_at_kst = submitted_at_utc.tz_localize('UTC').tz_convert('Asia/Seoul') if pd.notna(submitted_at_utc) else None
+
+                    student_name = row['이름을 입력해주세요. (띄어쓰기 금지)']
+                    student_class = row['클래스를 선택해주세요.']
+                    assignment_name = row['과제 번호를 선택해주세요. (반드시 확인요망)']
+
+                    deadline_info = deadlines_df[(deadlines_df['클래스'] == student_class) & (deadlines_df['과제명'] == assignment_name)]
+                    status = "정상제출" if not deadline_info.empty and submitted_at_kst and submitted_at_kst.tz_localize(None) <= deadline_info.iloc[0]['제출마감_datetime'] else "지각제출"
+                    
+                    header = submission_worksheet.row_values(1)
+                    submission_status_col = header.index('제출상태') + 1
+                    teacher_status_col = header.index('교사확인상태') + 1
+                    submission_worksheet.update_cell(row_index_in_sheet, submission_status_col, status)
+                    submission_worksheet.update_cell(row_index_in_sheet, teacher_status_col, '미확인')
+                    print(f"  - {row_index_in_sheet}행: '{status}' / '미확인' 업데이트 완료")
+
+                    student_info = roster_df[(roster_df['학생이름'] == student_name) & (roster_df['클래스'] == student_class)]
+                    if not student_info.empty:
+                        phone_number = str(student_info.iloc[0]['학생전화'])
+                        if phone_number:
+                            message = f"[김한이수학] {assignment_name} 제출 완료! ({status})"
+                            send_sms_aligo(phone_number, message)
+                    else:
+                        print(f"⚠️ {student_class}의 {student_name} 학생을 학생DB에서 찾을 수 없습니다.")
+                
+                print("✅ [Worker] 모든 새로운 과제 처리를 완료했습니다.")
+    except Exception as e:
+        print(f"🚨 [Worker/과제처리] 작업 중 오류 발생: {e}")
+
+
+    # --- 2. 매일 오전 11시에 미제출 알림 발송 (로직 수정) ---
+    global LAST_NOTIFICATION_DATE
+    
+    kst_now = datetime.now(pytz.timezone('Asia/Seoul'))
+    
+    # FIX: 알림 시간을 오전 11시로 변경
+    if kst_now.hour >= 11 and LAST_NOTIFICATION_DATE != kst_now.date():
+        print("\n✨ 미제출 과제 알림 발송 시간입니다. (11시) 작업을 시작합니다.")
         try:
-            # 미제출 현황 및 학생 DB 시트 로딩
+            gc = authenticate_gsheets()
             non_submission_sheet = gc.open_by_key(NON_SUBMISSION_SHEET_ID).worksheet("미제출현황")
             roster_sheet = gc.open_by_key(STUDENT_DB_ID).worksheet("(통합) 학생DB")
             
             non_submission_df = get_sheet_as_df(non_submission_sheet)
             roster_df = get_sheet_as_df(roster_sheet)
 
-            # 데이터 전처리
             non_submission_df.dropna(subset=['미제출과제번호'], inplace=True)
             non_submission_df = non_submission_df[non_submission_df['미제출과제번호'] != '']
             non_submission_df['미제출과제번호'] = non_submission_df['미제출과제번호'].astype(str)
             
             if non_submission_df.empty:
-                print("  - 알림을 보낼 미제출 과제가 없습니다.\n")
-                return
+                print("  - 알림을 보낼 미제출 과제가 없습니다.")
+            else:
+                reminders = non_submission_df.groupby(['클래스', '이름'])['미제출과제번호'].apply(list).reset_index()
+                print(f"  - 총 {len(reminders)}명의 학생에게 미제출 알림을 발송합니다.")
 
-            # 학생별 미제출 과제 취합
-            reminders = non_submission_df.groupby(['클래스', '이름'])['미제출과제번호'].apply(list).reset_index()
-            print(f"  - 총 {len(reminders)}명의 학생에게 미제출 알림을 발송합니다.")
-
-            # 학생별 문자 발송
-            for index, row in reminders.iterrows():
-                class_name = row['클래스']
-                student_name = row['이름']
-                hw_numbers = ", ".join(sorted(row['미제출과제번호']))
-                
-                student_info = roster_df[(roster_df['클래스'] == class_name) & (roster_df['학생이름'] == student_name)]
-                
-                if not student_info.empty:
-                    phone_number = str(student_info.iloc[0]['학생전화'])
-                    if phone_number:
-                        message = f"[김한이수학] 과제 {hw_numbers}가 미제출 중.....😰"
-                        print(f"  - {class_name} {student_name} 학생에게 발송...")
-                        send_sms_aligo(phone_number, message)
-                else:
-                    print(f"  - ⚠️ {class_name} {student_name} 학생을 학생DB에서 찾을 수 없습니다.")
+                for index, row in reminders.iterrows():
+                    class_name = row['클래스']
+                    student_name = row['이름']
+                    hw_numbers = ", ".join(sorted(row['미제출과제번호']))
+                    
+                    student_info = roster_df[(roster_df['클래스'] == class_name) & (roster_df['학생이름'] == student_name)]
+                    
+                    if not student_info.empty:
+                        phone_number = str(student_info.iloc[0]['학생전화'])
+                        if phone_number:
+                            message = f"[김한이수학] 과제 {hw_numbers}가 미제출 중.....😰"
+                            print(f"  - {class_name} {student_name} 학생에게 발송...")
+                            send_sms_aligo(phone_number, message)
+                    else:
+                        print(f"  - ⚠️ {class_name} {student_name} 학생을 학생DB에서 찾을 수 없습니다.")
             
-            print("🎉 미제출 과제 알림 발송 작업을 완료했습니다.\n")
+            LAST_NOTIFICATION_DATE = kst_now.date()
+            print(f"🎉 미제출 과제 알림 발송 작업을 완료했습니다. ({LAST_NOTIFICATION_DATE}) 다음 알림은 내일 옵니다.\n")
 
         except Exception as e:
             print(f"🚨 [Worker/미제출알림] 작업 중 오류 발생: {e}\n")
+
 
 def background_worker_task():
     """백그라운드에서 run_worker 함수를 주기적으로 실행하는 함수 (안정성 강화)"""
