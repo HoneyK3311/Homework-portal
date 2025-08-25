@@ -440,6 +440,7 @@ def get_student_level():
         return jsonify({"error": "레벨확인"}), 500
 
 # Homework_Portal.py 파일의 채점 페이지 관련 API 영역에 추가하세요.
+@app.route('/api/get_result_details')
 def get_result_details():
     if session.get('user_role') not in ['teacher', 'admin']:
         return jsonify({"error": "Unauthorized"}), 403
