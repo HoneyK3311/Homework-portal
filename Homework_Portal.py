@@ -21,7 +21,7 @@ LAST_NOTIFICATION_DATE = None
 # --- 전역 설정 ---
 SERVICE_ACCOUNT_FILE = 'sheets_service.json'
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-SOURCE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1myGZWyghHzEhziGpOzhpqvWxotyvfaGxmF4ddgFAeOc/edit?usp=sharing"
+SOURCE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1vB_YA_wRnr9t3HnoKNOJG3K_d365gsK4wN7zs-8IYdA/edit?usp=sharing"
 STUDENT_DB_ID = "1Od9PfHV39MSfwfUgWtPun0Y9zCqAdURc-iwd2n0rgBI"
 TARGET_SHEET_ID = "1VROqIZ2GmAlQSdw8kZyd_rC6oP_nqTsuVEnWIi0rS24"
 NON_SUBMISSION_SHEET_ID = "1vB_YA_wRnr9t3HnoKNOJG3K_d365gsK4wN7zs-8IYdA"
@@ -119,20 +119,6 @@ def run_worker():
         submissions_df = get_sheet_as_df(submission_worksheet)
         deadlines_df = get_sheet_as_df(deadline_worksheet)
         roster_df = get_sheet_as_df(roster_sheet)
-
-        # 🔍 디버깅: 항상 실행되도록 여기로 이동
-        print(f"📋 [DEBUG] 시트에서 읽어온 데이터 행수: {len(submissions_df)}")
-        print(f"📋 [DEBUG] submissions_df가 비어있는가? {submissions_df.empty}")
-        
-        if not submissions_df.empty:
-            print(f"📋 [DEBUG] 시트 헤더: {list(submissions_df.columns)}")
-            # 🔍 디버깅: 제출상태 컬럼 확인
-            if '제출상태' in submissions_df.columns:
-                print(f"📋 [DEBUG] 제출상태 컬럼 값들: {submissions_df['제출상태'].unique()}")
-                print(f"📋 [DEBUG] 빈 제출상태 행수: {len(submissions_df[submissions_df['제출상태'] == ''])}")
-            else:
-                print("🚨 [DEBUG] '제출상태' 컬럼을 찾을 수 없습니다!")
-                print(f"📋 [DEBUG] 사용 가능한 컬럼들: {list(submissions_df.columns)}")
 
         if submissions_df.empty: 
             print("✅ [Worker] 처리할 과제가 없습니다.")
