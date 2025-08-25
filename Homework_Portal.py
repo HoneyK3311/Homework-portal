@@ -123,6 +123,17 @@ def run_worker():
         if submissions_df.empty: 
             print("✅ [Worker] 처리할 과제가 없습니다.")
         else:
+            # 🔍 디버깅: 헤더 확인
+            print(f"📋 [DEBUG] 시트 헤더: {list(submissions_df.columns)}")
+            print(f"📋 [DEBUG] 총 {len(submissions_df)}개 행이 있습니다.")
+            
+            # 🔍 디버깅: 제출상태 컬럼 확인
+            if '제출상태' in submissions_df.columns:
+                print(f"📋 [DEBUG] 제출상태 컬럼 값들: {submissions_df['제출상태'].unique()}")
+            else:
+                print("🚨 [DEBUG] '제출상태' 컬럼을 찾을 수 없습니다!")
+                print(f"📋 [DEBUG] 사용 가능한 컬럼들: {list(submissions_df.columns)}")
+            
             unprocessed_submissions = submissions_df[submissions_df['제출상태'] == ''].copy()
             if unprocessed_submissions.empty: 
                 print("✅ [Worker] 새로운 과제가 없습니다.")
