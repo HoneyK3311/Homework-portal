@@ -78,8 +78,11 @@ def get_student_id(roster_df, student_name, class_name):
     """학생 이름과 클래스로 학생ID를 찾아서 반환하는 함수"""
     try:
         student_info = roster_df[(roster_df['학생이름'] == student_name) & (roster_df['클래스'] == class_name)]
+        
         if not student_info.empty:
-            return student_info.iloc[0]['학생ID']
+            # A열(첫 번째 컬럼)을 직접 가져오기
+            student_id = student_info.iloc[0].iloc[0]  # A열 = 인덱스 0
+            return str(student_id) if student_id else ""
         else:
             print(f"⚠️ {class_name}의 {student_name} 학생을 학생DB에서 찾을 수 없습니다.")
             return ""
@@ -245,7 +248,7 @@ def background_worker_task():
             print(f"🚨🚨 [CRITICAL] 백그라운드 스레드에 치명적인 오류가 발생했습니다: {e}")
             print("    -> 15초 후 작업을 재시도합니다.")
         
-        thread_time.sleep(15)
+        thread_time.sleep(20)  # 60초 → 20초로 변경
 
 # --- 페이지 렌더링 ---
 @app.route('/')
