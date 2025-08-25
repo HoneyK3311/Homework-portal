@@ -24,14 +24,14 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapi
 SOURCE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1myGZWyghHzEhziGpOzhpqvWxotyvfaGxmF4ddgFAeOc/edit?usp=sharing"
 STUDENT_DB_ID = "1Od9PfHV39MSfwfUgWtPun0Y9zCqAdURc-iwd2n0rgBI"
 TARGET_SHEET_ID = "1VROqIZ2GmAlQSdw8kZyd_rC6oP_nqTsuVEnWIi0rS24"
-NON_SUBMISSION_SHEET_ID = "1myGZWyghHzEhziGpOzhpqvWxotyvfaGxmF4ddgFAeOc"
+NON_SUBMISSION_SHEET_ID = "1vB_YA_wRnr9t3HnoKNOJG3K_d365gsK4wN7zs-8IYdA"
 
 # --- 워크시트 이름 ---
 SOURCE_WORKSHEET_NAME = "(탈리)과제제출"
 STUDENT_DB_WORKSHEET_NAME = "(통합) 학생DB"
 DEADLINE_WORKSHEET_NAME = "제출기한"
 
-# --- 알리고(Aligo) API 설정 ---
+# --- 알리고 (Aligo) API 설정 ---
 ALIGO_API_KEY = "fdqm21jhh1zffm5213uvgze5z85go3px"
 ALIGO_USER_ID = "kr308"
 SENDER_PHONE_NUMBER = "01098159412"
@@ -43,7 +43,7 @@ STAFF_CREDENTIALS = {
     "kr308": ["!!djqkdntflsdk", "admin"],   # 관리자는 한 명
 
     # --- 스태프(교사) 계정들 ---
-    "윤지희": ["04094517", "teacher"], # A 선생님
+    "윤지혜": ["04094517", "teacher"], # A 선생님
     "박하린": ["24275057", "teacher"], # B 선생님
     "박세린": ["24273738", "teacher"], # C 선생님
     "윤하연": ["53077146", "teacher"]  # D 선생님
@@ -74,6 +74,19 @@ def get_sheet_as_df(worksheet):
     
     return df
 
+def get_student_id(roster_df, student_name, class_name):
+    """학생 이름과 클래스로 학생ID를 찾아서 반환하는 함수"""
+    try:
+        student_info = roster_df[(roster_df['학생이름'] == student_name) & (roster_df['클래스'] == class_name)]
+        if not student_info.empty:
+            return student_info.iloc[0]['학생ID']
+        else:
+            print(f"⚠️ {class_name}의 {student_name} 학생을 학생DB에서 찾을 수 없습니다.")
+            return ""
+    except Exception as e:
+        print(f"🚨 학생ID 조회 중 오류: {e}")
+        return ""
+
 # ----------------------------------------------------------------
 # --- 문자 발송 및 백그라운드 워커 ---
 # ----------------------------------------------------------------
@@ -91,13 +104,11 @@ def send_sms_aligo(phone_number, message):
     except Exception as e:
         print(f"🚨 SMS 발송 중 예외 발생: {e}")
 
-# Homework_Portal.py 파일에서 이 함수를 찾아 교체하세요.
-
 def run_worker():
     # --- 1. 새로운 과제 처리 ---
     try:
         kst_now_for_submission = datetime.now(pytz.timezone('Asia/Seoul'))
-        print(f"⚙️  백그라운드 작업기 실행... (현재 시간: {kst_now_for_submission.strftime('%H:%M:%S')})")
+        print(f"⚙️ 백그라운드 작업기 실행... (현재 시간: {kst_now_for_submission.strftime('%H:%M:%S')})")
         
         gc = authenticate_gsheets()
         source_sheet = gc.open_by_url(SOURCE_SHEET_URL)
@@ -133,12 +144,19 @@ def run_worker():
                     deadline_info = deadlines_df[(deadlines_df['클래스'] == student_class) & (deadlines_df['과제명'] == assignment_name)]
                     status = "정상제출" if not deadline_info.empty and submitted_at_kst and submitted_at_kst.tz_localize(None) <= deadline_info.iloc[0]['제출마감_datetime'] else "지각제출"
                     
+                    # 1) 학생ID 가져오기
+                    student_id = get_student_id(roster_df, student_name, student_class)
+                    
                     header = submission_worksheet.row_values(1)
                     submission_status_col = header.index('제출상태') + 1
                     teacher_status_col = header.index('교사확인상태') + 1
+                    student_id_col = 10  # J열 (1부터 시작하므로 10)
+                    
                     submission_worksheet.update_cell(row_index_in_sheet, submission_status_col, status)
                     submission_worksheet.update_cell(row_index_in_sheet, teacher_status_col, '미확인')
-                    print(f"  - {row_index_in_sheet}행: '{status}' / '미확인' 업데이트 완료")
+                    submission_worksheet.update_cell(row_index_in_sheet, student_id_col, student_id)
+                    
+                    print(f"  - {row_index_in_sheet}행: '{status}' / '미확인' / 학생ID '{student_id}' 업데이트 완료")
 
                     student_info = roster_df[(roster_df['학생이름'] == student_name) & (roster_df['클래스'] == student_class)]
                     if not student_info.empty:
@@ -162,6 +180,9 @@ def run_worker():
     # FIX: 알림 시간을 오전 11시로 변경
     if kst_now.hour >= 11 and LAST_NOTIFICATION_DATE != kst_now.date():
         print("\n✨ 미제출 과제 알림 발송 시간입니다. (11시) 작업을 시작합니다.")
+        
+        notification_sent_students = []  # 4) 발송자 명단을 저장할 리스트
+        
         try:
             gc = authenticate_gsheets()
             non_submission_sheet = gc.open_by_key(NON_SUBMISSION_SHEET_ID).worksheet("미제출현황")
@@ -193,11 +214,21 @@ def run_worker():
                             message = f"[김한이수학] 과제 {hw_numbers}가 미제출 중.....😰"
                             print(f"  - {class_name} {student_name} 학생에게 발송...")
                             send_sms_aligo(phone_number, message)
+                            notification_sent_students.append(f"{class_name} {student_name}")  # 발송자 명단에 추가
                     else:
                         print(f"  - ⚠️ {class_name} {student_name} 학생을 학생DB에서 찾을 수 없습니다.")
             
+            # 4) 발송자 명단을 관리자에게 보고
+            if notification_sent_students:
+                report_message = f"[김한이수학 미제출알림 발송완료]\n총 {len(notification_sent_students)}명\n\n" + "\n".join(notification_sent_students)
+                print(f"  - 관리자에게 발송자 명단 보고 중...")
+                send_sms_aligo("01097559412", report_message)
+            else:
+                report_message = "[김한이수학 미제출알림] 오늘은 발송할 미제출 학생이 없습니다."
+                send_sms_aligo("01097559412", report_message)
+            
             LAST_NOTIFICATION_DATE = kst_now.date()
-            print(f"🎉 미제출 과제 알림 발송 작업을 완료했습니다. ({LAST_NOTIFICATION_DATE}) 다음 알림은 내일 옵니다.\n")
+            print(f"🎉 미제출 과제 알림 발송 작업을 완료했습니다. ({LAST_NOTIFICATION_DATE}) 다음 알림은 내일입니다.\n")
 
         except Exception as e:
             print(f"🚨 [Worker/미제출알림] 작업 중 오류 발생: {e}\n")
@@ -271,6 +302,8 @@ def update_status():
         gc = authenticate_gsheets()
         source_sheet = gc.open_by_url(SOURCE_SHEET_URL)
         source_worksheet = source_sheet.worksheet(SOURCE_WORKSHEET_NAME)
+        roster_sheet = gc.open_by_key(STUDENT_DB_ID).worksheet(STUDENT_DB_WORKSHEET_NAME)
+        roster_df = get_sheet_as_df(roster_sheet)
         
         cell_source = source_worksheet.find(payload.get('submissionId'))
         if not cell_source:
@@ -280,6 +313,9 @@ def update_status():
         new_status = "확인완료" if action == 'confirm' else "반려"
         
         target_sheet = gc.open_by_key(TARGET_SHEET_ID)
+        
+        # 2) 3) 학생ID 가져오기
+        student_id = get_student_id(roster_df, payload.get('studentName'), payload.get('className'))
         
         message = ""
         
@@ -292,7 +328,7 @@ def update_status():
             kst_now = datetime.now(pytz.timezone('Asia/Seoul'))
             grading_timestamp_str = kst_now.strftime('%Y-%m-%d %H:%M:%S')
             
-            # 사용자 헤더 순서: 클래스, 이름, 과제명, 제출상태, 전체문항수, 틀린문항수, 오답문항, 메모확인, 시간, 과제ID
+            # 2) 사용자 헤더 순서: 클래스, 이름, 과제명, 제출상태, 전체문항수, 틀린문항수, 오답문항, 메모확인, 시간, 과제ID, 학생ID
             new_row_data = [
                 payload.get('className'),
                 payload.get('studentName'),
@@ -303,13 +339,14 @@ def update_status():
                 wrong_problems_str,
                 payload.get('memo', ''), # 메모 정보 추가
                 grading_timestamp_str,
-                payload.get('submissionId')
+                payload.get('submissionId'),
+                student_id  # K열에 학생ID 추가
             ]
             
             df = get_sheet_as_df(worksheet)
             if not df.empty and '과제ID' in df.columns and payload.get('submissionId') in df['과제ID'].values:
                 existing_row_index = df[df['과제ID'] == payload.get('submissionId')].index[0] + 2
-                worksheet.update(f'A{existing_row_index}:J{existing_row_index}', [new_row_data])
+                worksheet.update(f'A{existing_row_index}:K{existing_row_index}', [new_row_data])
                 message = "채점 결과가 업데이트되었습니다."
             else:
                 worksheet.append_row(new_row_data, value_input_option='USER_ENTERED')
@@ -321,28 +358,27 @@ def update_status():
             kst_now = datetime.now(pytz.timezone('Asia/Seoul'))
             rejection_timestamp_str = kst_now.strftime('%Y-%m-%d %H:%M:%S')
             
-            # 사용자 헤더 순서: 클래스, 이름, 과제명, 반려사유, 반려시간, 과제ID
+            # 3) 사용자 헤더 순서: 클래스, 이름, 과제명, 반려사유, 반려시간, 과제ID, 학생ID
             new_row_data = [
                 payload.get('className'),
                 payload.get('studentName'),
                 payload.get('assignmentName'),
                 payload.get('reason'),
                 rejection_timestamp_str,
-                payload.get('submissionId')
+                payload.get('submissionId'),
+                student_id  # G열에 학생ID 추가
             ]
             
             df = get_sheet_as_df(worksheet)
             if not df.empty and '과제ID' in df.columns and payload.get('submissionId') in df['과제ID'].values:
                 existing_row_index = df[df['과제ID'] == payload.get('submissionId')].index[0] + 2
-                worksheet.update(f'A{existing_row_index}:F{existing_row_index}', [new_row_data])
+                worksheet.update(f'A{existing_row_index}:G{existing_row_index}', [new_row_data])
                 message = "반려 정보가 업데이트되었습니다."
             else:
                 worksheet.append_row(new_row_data, value_input_option='USER_ENTERED')
                 message = "반려 정보가 저장되었습니다."
 
             # SMS 발송 로직
-            student_db_sheet = gc.open_by_key(STUDENT_DB_ID).worksheet("(통합) 학생DB")
-            roster_df = get_sheet_as_df(student_db_sheet)
             student_info = roster_df[(roster_df['학생이름'] == payload.get('studentName')) & (roster_df['클래스'] == payload.get('className'))]
             if not student_info.empty:
                 phone_number = str(student_info.iloc[0]['학생전화'])
@@ -360,9 +396,47 @@ def update_status():
         traceback.print_exc()
         return jsonify({"success": False, "message": str(e)}), 500
     
-    # Homework_Portal.py 파일의 채점 페이지 관련 API 영역에 추가하세요.
+@app.route('/api/get_student_level')
+def get_student_level():
+    if session.get('user_role') not in ['teacher', 'admin']:
+        return jsonify({"error": "Unauthorized"}), 403
 
-@app.route('/api/get_result_details')
+    student_name = request.args.get('student_name')
+    class_name = request.args.get('class_name')
+    
+    if not student_name or not class_name:
+        return jsonify({"error": "학생 이름과 클래스가 필요합니다."}), 400
+
+    try:
+        gc = authenticate_gsheets()
+        roster_sheet = gc.open_by_key(STUDENT_DB_ID).worksheet(STUDENT_DB_WORKSHEET_NAME)
+        roster_df = get_sheet_as_df(roster_sheet)
+        
+        # 학생 정보 찾기
+        student_info = roster_df[(roster_df['학생이름'] == student_name) & (roster_df['클래스'] == class_name)]
+        
+        if student_info.empty:
+            return jsonify({"error": f"{class_name}의 {student_name} 학생을 찾을 수 없습니다."}), 404
+        
+        # L열에서 레벨 가져오기 (L열은 12번째 컬럼, 0부터 시작하므로 인덱스 11)
+        if len(roster_df.columns) > 11:
+            student_level = student_info.iloc[0].iloc[11] if len(student_info.iloc[0]) > 11 else ""
+        else:
+            student_level = ""
+        
+        # 빈 값이나 NaN 처리
+        if pd.isna(student_level) or str(student_level).strip() == '':
+            student_level = ""
+        else:
+            student_level = str(student_level).strip()
+        
+        return jsonify({"level": student_level})
+
+    except Exception as e:
+        print(f"학생 레벨 조회 중 오류: {e}")
+        return jsonify({"error": "레벨확인"}), 500
+
+# Homework_Portal.py 파일의 채점 페이지 관련 API 영역에 추가하세요.
 def get_result_details():
     if session.get('user_role') not in ['teacher', 'admin']:
         return jsonify({"error": "Unauthorized"}), 403
@@ -694,10 +768,6 @@ def staff_logout():
     return redirect(url_for('staff_login_page'))
 
 
-# Homework_Portal.py 파일에서 기존 sync 함수를 찾아 이 코드로 교체하세요.
-
-# Homework_Portal.py 파일에서 기존 sync 함수를 찾아 이 코드로 교체하세요.
-
 @app.route('/sync')
 def sync_graded_data():
     if session.get('user_role') != 'admin':
@@ -730,7 +800,6 @@ def sync_graded_data():
         if not graded_df.empty:
             missing_graded_df = graded_df[~graded_df['Clean ID'].isin(existing_submission_ids)]
             for index, row in missing_graded_df.iterrows():
-                # ... (이하 로직은 이전과 동일)
                 submitted_at = row.get('시간')
                 new_row = {h: '' for h in header_tally}
                 new_row['Submission ID'] = row.get('과제ID')
@@ -745,7 +814,6 @@ def sync_graded_data():
         if not rejected_df.empty:
             missing_rejected_df = rejected_df[~rejected_df['Clean ID'].isin(existing_submission_ids)]
             for index, row in missing_rejected_df.iterrows():
-                # ... (이하 로직은 이전과 동일)
                 submitted_at = row.get('반려시간')
                 new_row = {h: '' for h in header_tally}
                 new_row['Submission ID'] = row.get('과제ID')
@@ -832,90 +900,3 @@ print("Background worker thread started.")
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=True, use_reloader=False)
-
-# Homework_Portal.py 파일 맨 아래쪽에 추가하세요.
-
-@app.route('/map_ids')
-def map_student_ids():
-    if session.get('user_role') != 'admin':
-        return "권한이 없습니다.", 403
-
-    try:
-        gc = authenticate_gsheets()
-        
-        # 1. 학생DB 로드 (ID와 이름 매핑 테이블 생성)
-        student_db_sheet = gc.open_by_key(STUDENT_DB_ID).worksheet("(통합) 학생DB")
-        roster_df = get_sheet_as_df(student_db_sheet)
-        id_map = pd.Series(roster_df.ID.values, index=roster_df.학생이름).to_dict()
-
-        messages = []
-
-        # 2. (탈리)과제제출 시트 업데이트
-        tally_sheet = gc.open_by_url(SOURCE_SHEET_URL).worksheet("(탈리)과제제출")
-        tally_df = get_sheet_as_df(tally_sheet)
-        if '학생ID' not in tally_df.columns:
-            tally_sheet.update_cell(1, len(tally_df.columns) + 1, '학생ID')
-        
-        updates = []
-        for index, row in tally_df.iterrows():
-            if pd.isna(row.get('학생ID')) or row.get('학생ID') == '':
-                student_name = row.get('이름을 입력해주세요. (띄어쓰기 금지)')
-                student_id = id_map.get(student_name)
-                if student_id:
-                    # gspread는 행/열 번호가 1부터 시작하므로 index + 2
-                    updates.append({'range': f'J{index + 2}', 'values': [[student_id]]})
-        
-        if updates:
-            tally_sheet.batch_update(updates)
-            messages.append(f"<p>'(탈리)과제제출' 시트의 {len(updates)}개 행에 학생ID를 추가했습니다.</p>")
-        else:
-            messages.append("<p>'(탈리)과제제출' 시트는 이미 모든 ID가 채워져 있습니다.</p>")
-
-
-        # 3. 과제제출현황 시트 업데이트
-        graded_sheet = gc.open_by_key(TARGET_SHEET_ID).worksheet("과제제출현황")
-        graded_df = get_sheet_as_df(graded_sheet)
-        if '학생ID' not in graded_df.columns:
-            graded_sheet.update_cell(1, len(graded_df.columns) + 1, '학생ID')
-            
-        updates = []
-        for index, row in graded_df.iterrows():
-            if pd.isna(row.get('학생ID')) or row.get('학생ID') == '':
-                student_name = row.get('이름')
-                student_id = id_map.get(student_name)
-                if student_id:
-                    updates.append({'range': f'K{index + 2}', 'values': [[student_id]]})
-
-        if updates:
-            graded_sheet.batch_update(updates)
-            messages.append(f"<p>'과제제출현황' 시트의 {len(updates)}개 행에 학생ID를 추가했습니다.</p>")
-        else:
-            messages.append("<p>'과제제출현황' 시트는 이미 모든 ID가 채워져 있습니다.</p>")
-
-
-        # 4. 과제반려현황 시트 업데이트
-        rejected_sheet = gc.open_by_key(TARGET_SHEET_ID).worksheet("과제반려현황")
-        rejected_df = get_sheet_as_df(rejected_sheet)
-        if '학생ID' not in rejected_df.columns:
-            rejected_sheet.update_cell(1, len(rejected_df.columns) + 1, '학생ID')
-
-        updates = []
-        for index, row in rejected_df.iterrows():
-            if pd.isna(row.get('학생ID')) or row.get('학생ID') == '':
-                student_name = row.get('이름')
-                student_id = id_map.get(student_name)
-                if student_id:
-                    updates.append({'range': f'G{index + 2}', 'values': [[student_id]]})
-        
-        if updates:
-            rejected_sheet.batch_update(updates)
-            messages.append(f"<p>'과제반려현황' 시트의 {len(updates)}개 행에 학생ID를 추가했습니다.</p>")
-        else:
-            messages.append("<p>'과제반려현황' 시트는 이미 모든 ID가 채워져 있습니다.</p>")
-
-        return f"<h1>ID 매핑 작업 완료</h1>" + "".join(messages)
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return f"ID 매핑 중 오류 발생: {e}", 500
