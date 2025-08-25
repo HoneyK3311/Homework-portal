@@ -120,20 +120,23 @@ def run_worker():
         deadlines_df = get_sheet_as_df(deadline_worksheet)
         roster_df = get_sheet_as_df(roster_sheet)
 
-        if submissions_df.empty: 
-            print("✅ [Worker] 처리할 과제가 없습니다.")
-        else:
-            # 🔍 디버깅: 헤더 확인
+        # 🔍 디버깅: 항상 실행되도록 여기로 이동
+        print(f"📋 [DEBUG] 시트에서 읽어온 데이터 행수: {len(submissions_df)}")
+        print(f"📋 [DEBUG] submissions_df가 비어있는가? {submissions_df.empty}")
+        
+        if not submissions_df.empty:
             print(f"📋 [DEBUG] 시트 헤더: {list(submissions_df.columns)}")
-            print(f"📋 [DEBUG] 총 {len(submissions_df)}개 행이 있습니다.")
-            
             # 🔍 디버깅: 제출상태 컬럼 확인
             if '제출상태' in submissions_df.columns:
                 print(f"📋 [DEBUG] 제출상태 컬럼 값들: {submissions_df['제출상태'].unique()}")
+                print(f"📋 [DEBUG] 빈 제출상태 행수: {len(submissions_df[submissions_df['제출상태'] == ''])}")
             else:
                 print("🚨 [DEBUG] '제출상태' 컬럼을 찾을 수 없습니다!")
                 print(f"📋 [DEBUG] 사용 가능한 컬럼들: {list(submissions_df.columns)}")
-            
+
+        if submissions_df.empty: 
+            print("✅ [Worker] 처리할 과제가 없습니다.")
+        else:
             unprocessed_submissions = submissions_df[submissions_df['제출상태'] == ''].copy()
             if unprocessed_submissions.empty: 
                 print("✅ [Worker] 새로운 과제가 없습니다.")
