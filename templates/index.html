@@ -35,24 +35,23 @@
     </div>
 
     <div id="app" class="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto hidden">
-    <header class="flex justify-between items-center mb-6">
-        <h1 class="text-3xl font-bold">과제 채점 대시보드  </h1>
-        <div class="space-x-2">
-            <a href="/" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded">
-                Home
-            </a>
-            {% if user_role == 'admin' %}
-            <a href="/admin" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded">
-                관리자 대시보드
-            </a>
-            {% endif %}
-            <a href="/staff_logout" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded">
-                로그아웃
-            </a>
-        </div>
-    </header>
-    </div>
+        <header class="flex justify-between items-center mb-6">
+            <div>
+                <h1 class="text-3xl font-bold">과제 채점 대시보드</h1>
                 <p class="text-gray-600 mt-1">학생들의 과제 제출 현황을 한눈에 파악하고 관리하세요.</p>
+            </div>
+            <div class="space-x-2">
+                <a href="/" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded">
+                    Home
+                </a>
+                {% if user_role == 'admin' %}
+                <a href="/admin" class="bg-green-500 hover:bg-green-600 text-white font-bold py-2 px-4 rounded">
+                    관리자 대시보드
+                </a>
+                {% endif %}
+                <a href="/staff_logout" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded">
+                    로그아웃
+                </a>
             </div>
         </header>
 
@@ -310,7 +309,7 @@
                 updateImageViewer();
 
                 // 문항 목록 렌더링
-                renderProblemList();
+                await renderProblemList();
 
                 if (currentSubmission['교사확인상태'] === '확인완료') {
                     feedbackNotes.placeholder = "기존 데이터를 불러오는 중...";
@@ -323,7 +322,7 @@
                         feedbackNotes.value = details.memo || '';
                         const wrongProblems = details.wrongProblemTexts.split(',').map(s => s.trim()).filter(Boolean);
                         
-                        renderProblemList();
+                        await renderProblemList();
                         problemList.querySelectorAll('input[type="checkbox"]').forEach(cb => {
                             if (wrongProblems.includes(cb.value)) {
                                 cb.checked = true;
@@ -331,7 +330,7 @@
                         });
                     } catch (error) {
                         alert(error.message);
-                        renderProblemList();
+                        await renderProblemList();
                     } finally {
                         feedbackNotes.placeholder = "반려 시 사유를, 확인 완료 시 메모를 남길 수 있습니다.";
                     }
@@ -340,24 +339,72 @@
                 detailModal.classList.remove('hidden');
             }
 
-            function renderProblemList() {
-                problemList.innerHTML = '';
+            async function renderProblemList() {
+                problemList.innerHTML = '<div class="col-span-5 text-center text-gray-500">학생 레벨을 확인하는 중...</div>';
+                
                 const assignmentName = currentSubmission['과제 번호를 선택해주세요. (반드시 확인요망)'];
                 const className = currentSubmission['클래스를 선택해주세요.'];
-                const problems = allAssignments.filter(p => p.과제명 === assignmentName && (p.클래스 === className || !p.클래스));
+                const studentName = currentSubmission['이름을 입력해주세요. (띄어쓰기 금지)'];
+                
+                try {
+                    // 학생 레벨 조회
+                    const levelResponse = await fetch(`/api/get_student_level?student_name=${encodeURIComponent(studentName)}&class_name=${encodeURIComponent(className)}`);
+                    const levelData = await levelResponse.json();
+                    
+                    if (!levelResponse.ok) {
+                        throw new Error(levelData.error || '학생 레벨 조회 실패');
+                    }
+                    
+                    const studentLevel = levelData.level; // "B", "A", "" 등
+                    console.log(`학생 레벨: "${studentLevel}" (${typeof studentLevel})`);
+                    
+                    // 해당 과제의 모든 문항 확인 (디버깅용)
+                    const allProblemsForAssignment = allAssignments.filter(p => 
+                        p.과제명 === assignmentName && p.클래스 === className
+                    );
+                    console.log('해당 과제의 모든 문항:', allProblemsForAssignment.map(p => ({
+                        문항번호: p.문항번호,
+                        레벨: `"${p.레벨}"`,
+                        레벨타입: typeof p.레벨
+                    })));
+                    
+                    // 학생 레벨에 맞는 문항 필터링
+                    let problems;
+                    if (studentLevel && studentLevel !== '') {
+                        // 레벨이 있는 경우: 해당 레벨의 문항만
+                        problems = allAssignments.filter(p => 
+                            p.과제명 === assignmentName && 
+                            p.클래스 === className && 
+                            p.레벨 === studentLevel
+                        );
+                        console.log(`레벨 "${studentLevel}" 필터링 결과:`, problems.length, '개 문항');
+                    } else {
+                        // 레벨이 없는 경우: 레벨이 빈칸인 문항만
+                        problems = allAssignments.filter(p => 
+                            p.과제명 === assignmentName && 
+                            p.클래스 === className && 
+                            (!p.레벨 || p.레벨 === '')
+                        );
+                        console.log(`레벨 없음 필터링 결과:`, problems.length, '개 문항');
+                    }
 
-                if(problems.length > 0) {
-                    problems.forEach(p => {
-                        const problemId = `problem-${p.문항번호}`;
-                        const problemDiv = document.createElement('div');
-                        problemDiv.className = 'flex items-center justify-center p-1 border rounded-md hover:bg-gray-200 transition-colors';
-                        problemDiv.innerHTML = `
-                            <input id="${problemId}" type="checkbox" value="${p.원문번호}" class="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500">
-                            <label for="${problemId}" class="ml-2 block text-sm text-gray-900 select-none cursor-pointer">${p.문항번호}</label>`;
-                        problemList.appendChild(problemDiv);
-                    });
-                } else {
-                    problemList.innerHTML = '<p class="text-gray-500 text-sm flex items-center justify-center h-full col-span-5">해당 과제의 문항 정보가 없습니다.</p>';
+                    problemList.innerHTML = '';
+                    if(problems.length > 0) {
+                        problems.forEach(p => {
+                            const problemId = `problem-${p.문항번호}`;
+                            const problemDiv = document.createElement('div');
+                            problemDiv.className = 'flex items-center justify-center p-1 border rounded-md hover:bg-gray-200 transition-colors';
+                            problemDiv.innerHTML = `
+                                <input id="${problemId}" type="checkbox" value="${p.원문번호}" class="h-4 w-4 text-indigo-600 border-gray-300 rounded focus:ring-indigo-500">
+                                <label for="${problemId}" class="ml-2 block text-sm text-gray-900 select-none cursor-pointer">${p.문항번호}</label>`;
+                            problemList.appendChild(problemDiv);
+                        });
+                    } else {
+                        problemList.innerHTML = `<p class="text-gray-500 text-sm flex items-center justify-center h-full col-span-5">해당 과제의 문항 정보가 없습니다. (학생레벨: ${studentLevel || '없음'})</p>`;
+                    }
+                } catch (error) {
+                    console.error('문항 목록 로딩 중 오류:', error);
+                    problemList.innerHTML = '<p class="text-red-500 text-sm flex items-center justify-center h-full col-span-5">레벨확인</p>';
                 }
             }
 
