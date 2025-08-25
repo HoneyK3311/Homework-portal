@@ -832,3 +832,90 @@ print("Background worker thread started.")
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 5000))
     app.run(host='0.0.0.0', port=port, debug=True, use_reloader=False)
+
+# Homework_Portal.py 파일 맨 아래쪽에 추가하세요.
+
+@app.route('/map_ids')
+def map_student_ids():
+    if session.get('user_role') != 'admin':
+        return "권한이 없습니다.", 403
+
+    try:
+        gc = authenticate_gsheets()
+        
+        # 1. 학생DB 로드 (ID와 이름 매핑 테이블 생성)
+        student_db_sheet = gc.open_by_key(STUDENT_DB_ID).worksheet("(통합) 학생DB")
+        roster_df = get_sheet_as_df(student_db_sheet)
+        id_map = pd.Series(roster_df.ID.values, index=roster_df.학생이름).to_dict()
+
+        messages = []
+
+        # 2. (탈리)과제제출 시트 업데이트
+        tally_sheet = gc.open_by_url(SOURCE_SHEET_URL).worksheet("(탈리)과제제출")
+        tally_df = get_sheet_as_df(tally_sheet)
+        if '학생ID' not in tally_df.columns:
+            tally_sheet.update_cell(1, len(tally_df.columns) + 1, '학생ID')
+        
+        updates = []
+        for index, row in tally_df.iterrows():
+            if pd.isna(row.get('학생ID')) or row.get('학생ID') == '':
+                student_name = row.get('이름을 입력해주세요. (띄어쓰기 금지)')
+                student_id = id_map.get(student_name)
+                if student_id:
+                    # gspread는 행/열 번호가 1부터 시작하므로 index + 2
+                    updates.append({'range': f'J{index + 2}', 'values': [[student_id]]})
+        
+        if updates:
+            tally_sheet.batch_update(updates)
+            messages.append(f"<p>'(탈리)과제제출' 시트의 {len(updates)}개 행에 학생ID를 추가했습니다.</p>")
+        else:
+            messages.append("<p>'(탈리)과제제출' 시트는 이미 모든 ID가 채워져 있습니다.</p>")
+
+
+        # 3. 과제제출현황 시트 업데이트
+        graded_sheet = gc.open_by_key(TARGET_SHEET_ID).worksheet("과제제출현황")
+        graded_df = get_sheet_as_df(graded_sheet)
+        if '학생ID' not in graded_df.columns:
+            graded_sheet.update_cell(1, len(graded_df.columns) + 1, '학생ID')
+            
+        updates = []
+        for index, row in graded_df.iterrows():
+            if pd.isna(row.get('학생ID')) or row.get('학생ID') == '':
+                student_name = row.get('이름')
+                student_id = id_map.get(student_name)
+                if student_id:
+                    updates.append({'range': f'K{index + 2}', 'values': [[student_id]]})
+
+        if updates:
+            graded_sheet.batch_update(updates)
+            messages.append(f"<p>'과제제출현황' 시트의 {len(updates)}개 행에 학생ID를 추가했습니다.</p>")
+        else:
+            messages.append("<p>'과제제출현황' 시트는 이미 모든 ID가 채워져 있습니다.</p>")
+
+
+        # 4. 과제반려현황 시트 업데이트
+        rejected_sheet = gc.open_by_key(TARGET_SHEET_ID).worksheet("과제반려현황")
+        rejected_df = get_sheet_as_df(rejected_sheet)
+        if '학생ID' not in rejected_df.columns:
+            rejected_sheet.update_cell(1, len(rejected_df.columns) + 1, '학생ID')
+
+        updates = []
+        for index, row in rejected_df.iterrows():
+            if pd.isna(row.get('학생ID')) or row.get('학생ID') == '':
+                student_name = row.get('이름')
+                student_id = id_map.get(student_name)
+                if student_id:
+                    updates.append({'range': f'G{index + 2}', 'values': [[student_id]]})
+        
+        if updates:
+            rejected_sheet.batch_update(updates)
+            messages.append(f"<p>'과제반려현황' 시트의 {len(updates)}개 행에 학생ID를 추가했습니다.</p>")
+        else:
+            messages.append("<p>'과제반려현황' 시트는 이미 모든 ID가 채워져 있습니다.</p>")
+
+        return f"<h1>ID 매핑 작업 완료</h1>" + "".join(messages)
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"ID 매핑 중 오류 발생: {e}", 500
