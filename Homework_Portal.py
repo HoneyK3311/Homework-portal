@@ -496,6 +496,8 @@ def admin_page():
 
 # Homework_Portal.py 파일에서 이 함수를 찾아 아래 내용으로 전체를 교체해주세요.
 
+# Homework_Portal.py 파일에서 이 함수를 찾아 아래 내용으로 전체를 교체해주세요.
+
 @app.route('/api/admin_dashboard')
 def get_admin_dashboard_data():
     if session.get('user_role') != 'admin':
@@ -521,22 +523,18 @@ def get_admin_dashboard_data():
             return jsonify({"summary_stats": {"total_required": 0, "total_completed": 0, "total_missing": 0}, "charts_data": {"by_assignment": {}, "overall_by_class": []}, "honor_rank": {"top10": [], "bottom10": []}})
 
         kst_now = datetime.now(ZoneInfo('Asia/Seoul'))
-        # ✨ [수정] 시간대 정보가 포함된 오늘 날짜의 시작 시간
         today_start_aware = kst_now.replace(hour=0, minute=0, second=0, microsecond=0)
         current_year = kst_now.year
         
         deadlines_df['기한_날짜'] = deadlines_df['제출기한'].str.extract(r'(\d{1,2}/\d{1,2})').iloc[:, 0]
         deadlines_df['제출마감_datetime'] = pd.to_datetime(f'{current_year}/' + deadlines_df['기한_날짜'], format='%Y/%m/%d', errors='coerce')
-        # 시간대 정보가 없는 naive datetime으로 마감 기한 필터링
         past_due_assignments_df = deadlines_df[deadlines_df['제출마감_datetime'] < today_start_aware.replace(tzinfo=None)].dropna(subset=['제출마감_datetime'])
         
         if past_due_assignments_df.empty:
             return jsonify({"summary_stats": {"total_required": 0, "total_completed": 0, "total_missing": 0}, "charts_data": {"by_assignment": {}, "overall_by_class": []}, "honor_rank": {"top10": [], "bottom10": []}})
 
-        # 2. ✨ [수정] how='cross' 삭제
         required_submissions = pd.merge(roster_df, past_due_assignments_df, on='클래스')
 
-        # 3. 실제 제출 기록과 제출 의무 기록 병합 (이하 로직은 이전과 거의 동일)
         merged_df = pd.merge(
             required_submissions,
             submissions_df,
@@ -551,14 +549,12 @@ def get_admin_dashboard_data():
             return '지각제출'
         merged_df['final_status'] = merged_df.apply(determine_status, axis=1)
 
-        # 4. 학생별 성실도 계산
         student_performance = merged_df.groupby(['학생이름', '클래스'])['final_status'].value_counts().unstack(fill_value=0)
         if '정상제출' not in student_performance: student_performance['정상제출'] = 0
         if '지각제출' not in student_performance: student_performance['지각제출'] = 0
         if '미제출' not in student_performance: student_performance['미제출'] = 0
         student_performance = student_performance.rename(columns={'정상제출': 'on_time', '지각제출': 'late', '미제출': 'missing'})
 
-        # 5. 클래스별/과제별 통계 한번에 계산
         class_summary_agg = merged_df.groupby('클래스').agg(
             required=('final_status', 'size'),
             completed=('final_status', lambda x: (x != '미제출').sum())
@@ -569,7 +565,6 @@ def get_admin_dashboard_data():
             completed=('final_status', lambda x: (x != '미제출').sum())
         ).reset_index()
 
-        # 6. 프론트엔드에 보낼 데이터 형식으로 가공
         summary_stats = {"total_required": int(class_summary_agg['required'].sum()), "total_completed": int(class_summary_agg['completed'].sum()), "total_missing": int(class_summary_agg['required'].sum() - class_summary_agg['completed'].sum())}
         
         chart_overall_by_class = []
@@ -584,14 +579,18 @@ def get_admin_dashboard_data():
             rate = (row['completed'] / row['total'] * 100) if row['total'] > 0 else 0
             chart_data_by_assignment[class_name].append({"assignment_name": row['과제명'], "submission_rate": round(rate, 1), "details": f"{row['completed']} / {row['total']}명"})
         
-        # 7. 랭킹 데이터 생성
         ranked_students = student_performance.reset_index().sort_values(by=['missing', 'late', 'on_time'], ascending=[False, False, True])
         
         grouped_ranks = []
         if not ranked_students.empty:
             rank_cols = ['missing', 'late', 'on_time']
             for stats_tuple, group in ranked_students.groupby(rank_cols):
-                stats_dict = {'missing': stats_tuple[0], 'late': stats_tuple[1], 'on_time': stats_tuple[2]}
+                # ✨ [수정] 모든 숫자 값을 int()로 감싸서 표준 정수 타입으로 변환
+                stats_dict = {
+                    'missing': int(stats_tuple[0]),
+                    'late': int(stats_tuple[1]),
+                    'on_time': int(stats_tuple[2])
+                }
                 names_list = [(name, cls) for name, cls in group[['학생이름', '클래스']].values]
                 grouped_ranks.append({"stats": stats_dict, "names": names_list})
         grouped_ranks.sort(key=lambda x: (x['stats']['missing'], x['stats']['late'], -x['stats']['on_time']))
