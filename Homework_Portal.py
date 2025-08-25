@@ -494,6 +494,8 @@ def admin_page():
 
 # Homework_Portal.py 파일에서 이 함수를 찾아 아래 내용으로 전체를 교체해주세요.
 
+# Homework_Portal.py 파일에서 이 함수를 찾아 아래 내용으로 전체를 교체해주세요.
+
 @app.route('/api/admin_dashboard')
 def get_admin_dashboard_data():
     if session.get('user_role') != 'admin':
@@ -501,7 +503,7 @@ def get_admin_dashboard_data():
     try:
         gc = authenticate_gsheets()
 
-        # 1. 데이터 로드 (기존과 동일)
+        # 1. 데이터 로드
         student_db_sheet = gc.open_by_key(STUDENT_DB_ID).worksheet(STUDENT_DB_WORKSHEET_NAME)
         roster_df = get_sheet_as_df(student_db_sheet)
         
@@ -515,17 +517,26 @@ def get_admin_dashboard_data():
         roster_df = roster_df[roster_df['현재상태'] == '등록중'].copy()
         submissions_df = submissions_df[submissions_df['교사확인상태'] != '반려'].copy()
 
-        today_start = datetime.combine(datetime.now(ZoneInfo('Asia/Seoul')).date(), time.min)
-        current_year = datetime.now(ZoneInfo('Asia/Seoul')).year
+        if roster_df.empty:
+            return jsonify({"summary_stats": {"total_required": 0, "total_completed": 0, "total_missing": 0}, "charts_data": {"by_assignment": {}, "overall_by_class": []}, "honor_rank": {"top10": [], "bottom10": []}})
+
+        kst_now = datetime.now(ZoneInfo('Asia/Seoul'))
+        # ✨ [수정] 시간대 정보가 포함된 오늘 날짜의 시작 시간
+        today_start_aware = kst_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        current_year = kst_now.year
         
         deadlines_df['기한_날짜'] = deadlines_df['제출기한'].str.extract(r'(\d{1,2}/\d{1,2})').iloc[:, 0]
         deadlines_df['제출마감_datetime'] = pd.to_datetime(f'{current_year}/' + deadlines_df['기한_날짜'], format='%Y/%m/%d', errors='coerce')
-        past_due_assignments_df = deadlines_df[deadlines_df['제출마감_datetime'] < today_start].dropna(subset=['제출마감_datetime'])
-
-        # 2. ✨ [최적화] 모든 학생이 제출해야 할 과제 목록 생성
-        required_submissions = roster_df.merge(past_due_assignments_df, on='클래스', how='cross')
+        # 시간대 정보가 없는 naive datetime으로 마감 기한 필터링
+        past_due_assignments_df = deadlines_df[deadlines_df['제출마감_datetime'] < today_start_aware.replace(tzinfo=None)].dropna(subset=['제출마감_datetime'])
         
-        # 3. ✨ [최적화] 실제 제출 기록과 제출 의무 기록 병합
+        if past_due_assignments_df.empty:
+            return jsonify({"summary_stats": {"total_required": 0, "total_completed": 0, "total_missing": 0}, "charts_data": {"by_assignment": {}, "overall_by_class": []}, "honor_rank": {"top10": [], "bottom10": []}})
+
+        # 2. ✨ [수정] how='cross' 삭제
+        required_submissions = pd.merge(roster_df, past_due_assignments_df, on='클래스')
+
+        # 3. 실제 제출 기록과 제출 의무 기록 병합 (이하 로직은 이전과 거의 동일)
         merged_df = pd.merge(
             required_submissions,
             submissions_df,
@@ -534,85 +545,65 @@ def get_admin_dashboard_data():
             how='left'
         )
         
-        # 제출 상태 판별 (제출 기록이 없으면 '미제출')
         def determine_status(row):
-            if pd.isna(row['제출상태']):
-                return '미제출'
-            if '정상' in row['제출상태']:
-                return '정상제출'
+            if pd.isna(row['제출상태']): return '미제출'
+            if '정상' in str(row['제출상태']): return '정상제출'
             return '지각제출'
         merged_df['final_status'] = merged_df.apply(determine_status, axis=1)
 
-        # 4. ✨ [최적화] 학생별 성실도 계산
+        # 4. 학생별 성실도 계산
         student_performance = merged_df.groupby(['학생이름', '클래스'])['final_status'].value_counts().unstack(fill_value=0)
-        # 컬럼 이름 변경 (e.g., 정상제출 -> on_time)
+        if '정상제출' not in student_performance: student_performance['정상제출'] = 0
+        if '지각제출' not in student_performance: student_performance['지각제출'] = 0
+        if '미제출' not in student_performance: student_performance['미제출'] = 0
         student_performance = student_performance.rename(columns={'정상제출': 'on_time', '지각제출': 'late', '미제출': 'missing'})
-        
-        # 5. ✨ [최적화] 클래스별/과제별 통계 계산
-        class_summary = merged_df.groupby('클래스_x')['final_status'].apply(lambda x: (x != '미제출').sum()).reset_index(name='completed')
-        class_summary['required'] = merged_df.groupby('클래스_x').size().values
-        
-        assignment_summary = merged_df.groupby(['클래스_x', '과제명'])['final_status'].apply(lambda x: (x != '미제출').sum()).reset_index(name='completed')
-        assignment_summary['total'] = merged_df.groupby(['클래스_x', '과제명']).size().values
 
-        # 6. ✨ [최적화] 프론트엔드에 보낼 데이터 형식으로 가공
-        summary_stats = {
-            "total_required": int(class_summary['required'].sum()),
-            "total_completed": int(class_summary['completed'].sum()),
-            "total_missing": int(class_summary['required'].sum() - class_summary['completed'].sum())
-        }
+        # 5. 클래스별/과제별 통계 한번에 계산
+        class_summary_agg = merged_df.groupby('클래스').agg(
+            required=('final_status', 'size'),
+            completed=('final_status', lambda x: (x != '미제출').sum())
+        ).reset_index()
+
+        assignment_summary_agg = merged_df.groupby(['클래스', '과제명']).agg(
+            total=('final_status', 'size'),
+            completed=('final_status', lambda x: (x != '미제출').sum())
+        ).reset_index()
+
+        # 6. 프론트엔드에 보낼 데이터 형식으로 가공
+        summary_stats = {"total_required": int(class_summary_agg['required'].sum()), "total_completed": int(class_summary_agg['completed'].sum()), "total_missing": int(class_summary_agg['required'].sum() - class_summary_agg['completed'].sum())}
         
         chart_overall_by_class = []
-        for _, row in class_summary.iterrows():
+        for _, row in class_summary_agg.iterrows():
             rate = (row['completed'] / row['required'] * 100) if row['required'] > 0 else 0
-            chart_overall_by_class.append({
-                "class_name": row['클래스_x'], 
-                "rate": round(rate, 1), 
-                "details": f"{row['completed']} / {row['required']}건"
-            })
+            chart_overall_by_class.append({"class_name": row['클래스'], "rate": round(rate, 1), "details": f"{row['completed']} / {row['required']}건"})
 
         chart_data_by_assignment = {}
-        for _, row in assignment_summary.iterrows():
-            class_name = row['클래스_x']
-            if class_name not in chart_data_by_assignment:
-                chart_data_by_assignment[class_name] = []
-            
+        for _, row in assignment_summary_agg.iterrows():
+            class_name = row['클래스']
+            if class_name not in chart_data_by_assignment: chart_data_by_assignment[class_name] = []
             rate = (row['completed'] / row['total'] * 100) if row['total'] > 0 else 0
-            chart_data_by_assignment[class_name].append({
-                "assignment_name": row['과제명'],
-                "submission_rate": round(rate, 1),
-                "details": f"{row['completed']} / {row['total']}명"
-            })
+            chart_data_by_assignment[class_name].append({"assignment_name": row['과제명'], "submission_rate": round(rate, 1), "details": f"{row['completed']} / {row['total']}명"})
         
-        # 7. ✨ [최적화] 랭킹 데이터 생성
+        # 7. 랭킹 데이터 생성
         ranked_students = student_performance.reset_index().sort_values(by=['missing', 'late', 'on_time'], ascending=[False, False, True])
         
-        # 동점자 그룹화 로직 (기존과 유사하게 유지)
         grouped_ranks = []
         if not ranked_students.empty:
-            # 필요한 컬럼만 추출하여 그룹화
             rank_cols = ['missing', 'late', 'on_time']
             for stats_tuple, group in ranked_students.groupby(rank_cols):
                 stats_dict = {'missing': stats_tuple[0], 'late': stats_tuple[1], 'on_time': stats_tuple[2]}
-                names_list = group[['학생이름', '클래스']].values.tolist()
+                names_list = [(name, cls) for name, cls in group[['학생이름', '클래스']].values]
                 grouped_ranks.append({"stats": stats_dict, "names": names_list})
-
-        # 순위 정렬: 미제출 적은 순 -> 지각 적은 순 -> 정상제출 많은 순
         grouped_ranks.sort(key=lambda x: (x['stats']['missing'], x['stats']['late'], -x['stats']['on_time']))
 
         honor_rank = { "top10": grouped_ranks[:10], "bottom10": grouped_ranks[-10:][::-1] }
         
-        dashboard_data = {
-            "summary_stats": summary_stats,
-            "charts_data": { "by_assignment": chart_data_by_assignment, "overall_by_class": chart_overall_by_class },
-            "honor_rank": honor_rank
-        }
+        dashboard_data = {"summary_stats": summary_stats, "charts_data": { "by_assignment": chart_data_by_assignment, "overall_by_class": chart_overall_by_class }, "honor_rank": honor_rank}
         return jsonify(dashboard_data)
         
     except Exception as e:
         import traceback
         traceback.print_exc()
-        print(f"관리자 대시보드 데이터 생성 중 오류: {e}")
         return jsonify({"error": str(e)}), 500
 
 # ----------------------------------------------------------------
