@@ -10,6 +10,7 @@ import time as thread_time
 import threading
 from flask import Flask, jsonify, render_template, request, session, redirect, url_for
 import pytz
+from zoneinfo import ZoneInfo
 
 # --- Flask 앱 초기화 ---
 app = Flask(__name__, template_folder='templates')
@@ -110,7 +111,7 @@ def send_sms_aligo(phone_number, message):
 def run_worker():
     # --- 1. 새로운 과제 처리 ---
     try:
-        kst_now_for_submission = datetime.now(pytz.timezone('Asia/Seoul'))
+        kst_now_for_submission = datetime.now(ZoneInfo('Asia/Seoul'))
         print(f"⚙️ 백그라운드 작업기 실행... (현재 시간: {kst_now_for_submission.strftime('%H:%M:%S')})")
         
         gc = authenticate_gsheets()
@@ -178,7 +179,7 @@ def run_worker():
     # --- 2. 매일 오전 11시에 미제출 알림 발송 (로직 수정) ---
     global LAST_NOTIFICATION_DATE
     
-    kst_now = datetime.now(pytz.timezone('Asia/Seoul'))
+    kst_now = datetime.now(ZoneInfo('Asia/Seoul'))
     
     # FIX: 알림 시간을 오전 11시로 변경
     if kst_now.hour >= 11 and LAST_NOTIFICATION_DATE != kst_now.date():
@@ -328,7 +329,7 @@ def update_status():
             wrong_problems_list = payload.get('wrongProblemTexts', [])
             wrong_problems_str = ", ".join(wrong_problems_list)
             
-            kst_now = datetime.now(pytz.timezone('Asia/Seoul'))
+            kst_now = datetime.now(ZoneInfo('Asia/Seoul'))
             grading_timestamp_str = kst_now.strftime('%Y-%m-%d %H:%M:%S')
             
             # 2) 사용자 헤더 순서: 클래스, 이름, 과제명, 제출상태, 전체문항수, 틀린문항수, 오답문항, 메모확인, 시간, 과제ID, 학생ID
@@ -358,7 +359,7 @@ def update_status():
         elif action == 'reject':
             worksheet = target_sheet.worksheet("과제반려현황")
             
-            kst_now = datetime.now(pytz.timezone('Asia/Seoul'))
+            kst_now = datetime.now(ZoneInfo('Asia/Seoul'))
             rejection_timestamp_str = kst_now.strftime('%Y-%m-%d %H:%M:%S')
             
             # 3) 사용자 헤더 순서: 클래스, 이름, 과제명, 반려사유, 반려시간, 과제ID, 학생ID
