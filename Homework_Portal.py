@@ -25,12 +25,17 @@ SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapi
 SOURCE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1vB_YA_wRnr9t3HnoKNOJG3K_d365gsK4wN7zs-8IYdA/edit?usp=sharing"
 STUDENT_DB_ID = "1Od9PfHV39MSfwfUgWtPun0Y9zCqAdURc-iwd2n0rgBI"
 TARGET_SHEET_ID = "1VROqIZ2GmAlQSdw8kZyd_rC6oP_nqTsuVEnWIi0rS24"
-NON_SUBMISSION_SHEET_ID = "1vB_YA_wRnr9t3HnoKNOJG3K_d365gsK4wN7zs-8IYdA"
+NON_SUBMISSION_SHEET_ID = "1a_gceK1ygb8HNuwxNhGLabSqf3rTI98uO_8lfUt1FsE"
 
 # --- 워크시트 이름 ---
 SOURCE_WORKSHEET_NAME = "(탈리)과제제출"
 STUDENT_DB_WORKSHEET_NAME = "(통합) 학생DB"
 DEADLINE_WORKSHEET_NAME = "제출기한"
+
+# --- 텔레그램 봇 설정 ---
+# ✨ 여기에 아까 발급받은 봇 토큰과 채팅 ID를 입력하세요.
+TELEGRAM_BOT_TOKEN = "8355384706:AAG55OSbESovxFJwFI6ZuccbEYEk0J0aPMY"
+TELEGRAM_CHAT_ID = "5233769738"
 
 # --- 알리고 (Aligo) API 설정 ---
 ALIGO_API_KEY = "fdqm21jhh1zffm5213uvgze5z85go3px"
@@ -46,10 +51,32 @@ STAFF_CREDENTIALS = {
     # --- 스태프(교사) 계정들 ---
     "윤지희": ["04094517", "teacher"], # A 선생님
     "박하린": ["24275057", "teacher"], # B 선생님
-    "박세린": ["24273738", "teacher"], # C 선생님
     "윤하연": ["53077146", "teacher"]  # D 선생님
     # 필요한 만큼 "ID": ["비번", "teacher"] 형식으로 계속 추가...
 }
+
+# --- 텔레그램 메시지 전송 함수 ---
+def send_telegram_message(chat_id, message):
+    """지정된 채팅 ID로 텔레그램 메시지를 전송합니다."""
+    # 토큰이 설정되지 않았으면 시뮬레이션만 실행
+    if "여기에" in TELEGRAM_BOT_TOKEN:
+        print(f" (텔레그램 시뮬레이션) 받는사람: {chat_id}, 메시지: {message}")
+        return
+
+    try:
+        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+        payload = {
+            'chat_id': chat_id,
+            'text': message,
+            'parse_mode': 'HTML' # 메시지에 <b>, <i> 같은 간단한 HTML 태그 사용 가능
+        }
+        response = requests.post(url, json=payload)
+        if response.status_code == 200:
+            print(f"✅ 텔레그램 메시지 발송 성공!")
+        else:
+            print(f"🚨 텔레그램 메시지 발송 실패: {response.json()}")
+    except Exception as e:
+        print(f"🚨 텔레그램 메시지 발송 중 예외 발생: {e}")
 
 
 
@@ -148,13 +175,12 @@ def run_worker():
                     deadline_info = deadlines_df[(deadlines_df['클래스'] == student_class) & (deadlines_df['과제명'] == assignment_name)]
                     status = "정상제출" if not deadline_info.empty and submitted_at_kst and submitted_at_kst.tz_localize(None) <= deadline_info.iloc[0]['제출마감_datetime'] else "지각제출"
                     
-                    # 1) 학생ID 가져오기
                     student_id = get_student_id(roster_df, student_name, student_class)
                     
                     header = submission_worksheet.row_values(1)
                     submission_status_col = header.index('제출상태') + 1
                     teacher_status_col = header.index('교사확인상태') + 1
-                    student_id_col = 10  # J열 (1부터 시작하므로 10)
+                    student_id_col = 10
                     
                     submission_worksheet.update_cell(row_index_in_sheet, submission_status_col, status)
                     submission_worksheet.update_cell(row_index_in_sheet, teacher_status_col, '미확인')
@@ -168,12 +194,78 @@ def run_worker():
                         if phone_number:
                             message = f"[김한이수학] {assignment_name} 제출 완료! ({status})"
                             send_sms_aligo(phone_number, message)
+
+                            # ✨ [추가] 관리자에게 텔레그램으로 제출 보고
+                            telegram_report = f"✅ <b>{student_class} {student_name}</b>\n{assignment_name} 제출 완료 ({status})"
+                            send_telegram_message(TELEGRAM_CHAT_ID, telegram_report)
                     else:
                         print(f"⚠️ {student_class}의 {student_name} 학생을 학생DB에서 찾을 수 없습니다.")
                 
                 print("✅ [Worker] 모든 새로운 과제 처리를 완료했습니다.")
     except Exception as e:
         print(f"🚨 [Worker/과제처리] 작업 중 오류 발생: {e}")
+
+
+    # --- 2. 매일 오전 11시에 미제출 알림 발송 (로직 수정) ---
+    global LAST_NOTIFICATION_DATE
+    
+    kst_now = datetime.now(ZoneInfo('Asia/Seoul'))
+    
+    if kst_now.hour >= 11 and LAST_NOTIFICATION_DATE != kst_now.date():
+        print("\n✨ 미제출 과제 알림 발송 시간입니다. (11시) 작업을 시작합니다.")
+        
+        notification_sent_students = []
+        
+        try:
+            gc = authenticate_gsheets()
+            non_submission_sheet = gc.open_by_key(NON_SUBMISSION_SHEET_ID).worksheet("미제출현황")
+            roster_sheet = gc.open_by_key(STUDENT_DB_ID).worksheet("(통합) 학생DB")
+            
+            non_submission_df = get_sheet_as_df(non_submission_sheet)
+            roster_df = get_sheet_as_df(roster_sheet)
+
+            non_submission_df.dropna(subset=['미제출과제번호'], inplace=True)
+            non_submission_df = non_submission_df[non_submission_df['미제출과제번호'] != '']
+            non_submission_df['미제출과제번호'] = non_submission_df['미제출과제번호'].astype(str)
+            
+            if non_submission_df.empty:
+                print("  - 알림을 보낼 미제출 과제가 없습니다.")
+            else:
+                reminders = non_submission_df.groupby(['클래스', '이름'])['미제출과제번호'].apply(list).reset_index()
+                print(f"  - 총 {len(reminders)}명의 학생에게 미제출 알림을 발송합니다.")
+
+                for index, row in reminders.iterrows():
+                    class_name = row['클래스']
+                    student_name = row['이름']
+                    hw_numbers = ", ".join(sorted(row['미제출과제번호']))
+                    
+                    student_info = roster_df[(roster_df['클래스'] == class_name) & (roster_df['학생이름'] == student_name)]
+                    
+                    if not student_info.empty:
+                        phone_number = str(student_info.iloc[0]['학생전화'])
+                        if phone_number:
+                            message = f"[김한이수학] 과제 {hw_numbers}가 미제출 중.....😰"
+                            print(f"  - {class_name} {student_name} 학생에게 발송...")
+                            send_sms_aligo(phone_number, message)
+                            notification_sent_students.append(f"{class_name} {student_name}")
+                    else:
+                        print(f"  - ⚠️ {class_name} {student_name} 학생을 학생DB에서 찾을 수 없습니다.")
+            
+            # ✨ [변경] 발송자 명단을 SMS가 아닌 텔레그램으로 관리자에게 보고
+            if notification_sent_students:
+                report_message = f"[김한이수학 미제출알림 발송완료]\n총 {len(notification_sent_students)}명\n\n" + "\n".join(notification_sent_students)
+                telegram_report_title = f"🔔 <b>미제출 과제 알림 요약 ({kst_now.strftime('%m/%d')})</b>\n\n"
+                print(f"  - 관리자에게 텔레그램으로 발송자 명단 보고 중...")
+                send_telegram_message(TELEGRAM_CHAT_ID, telegram_report_title + report_message)
+            else:
+                report_message = "[김한이수학 미제출알림] 오늘은 발송할 미제출 학생이 없습니다."
+                send_telegram_message(TELEGRAM_CHAT_ID, report_message)
+            
+            LAST_NOTIFICATION_DATE = kst_now.date()
+            print(f"🎉 미제출 과제 알림 발송 작업을 완료했습니다. ({LAST_NOTIFICATION_DATE}) 다음 알림은 내일입니다.\n")
+
+        except Exception as e:
+            print(f"🚨 [Worker/미제출알림] 작업 중 오류 발생: {e}\n")
 
 
     # --- 2. 매일 오전 11시에 미제출 알림 발송 (로직 수정) ---
@@ -318,9 +410,14 @@ def update_status():
         
         target_sheet = gc.open_by_key(TARGET_SHEET_ID)
         
-        # 2) 3) 학생ID 가져오기
         student_id = get_student_id(roster_df, payload.get('studentName'), payload.get('className'))
         
+        # ✨ [추가] 텔레그램 보고에 사용할 공통 정보
+        teacher_name = session.get('user_id', '알수없음') # 로그인한 교사 ID 가져오기
+        student_class = payload.get('className')
+        student_name = payload.get('studentName')
+        assignment_name = payload.get('assignmentName')
+
         message = ""
         
         if action == 'confirm':
@@ -332,19 +429,12 @@ def update_status():
             kst_now = datetime.now(ZoneInfo('Asia/Seoul'))
             grading_timestamp_str = kst_now.strftime('%Y-%m-%d %H:%M:%S')
             
-            # 2) 사용자 헤더 순서: 클래스, 이름, 과제명, 제출상태, 전체문항수, 틀린문항수, 오답문항, 메모확인, 시간, 과제ID, 학생ID
             new_row_data = [
-                payload.get('className'),
-                payload.get('studentName'),
-                payload.get('assignmentName'),
-                payload.get('submissionStatus'),
-                payload.get('totalProblems'),
-                payload.get('wrongProblemCount'),
-                wrong_problems_str,
-                payload.get('memo', ''), # 메모 정보 추가
-                grading_timestamp_str,
-                payload.get('submissionId'),
-                student_id  # K열에 학생ID 추가
+                student_class, student_name, assignment_name,
+                payload.get('submissionStatus'), payload.get('totalProblems'),
+                payload.get('wrongProblemCount'), wrong_problems_str,
+                payload.get('memo', ''), grading_timestamp_str,
+                payload.get('submissionId'), student_id
             ]
             
             df = get_sheet_as_df(worksheet)
@@ -355,6 +445,13 @@ def update_status():
             else:
                 worksheet.append_row(new_row_data, value_input_option='USER_ENTERED')
                 message = "채점 결과가 저장되었습니다."
+
+            # ✨ [추가] 관리자에게 텔레그램으로 '확인 완료' 보고
+            telegram_report = (f"👍 <b>{teacher_name} 선생님</b>\n"
+                               f"{student_class} {student_name} 학생\n"
+                               f"'{assignment_name}' 확인 완료\n"
+                               f"(결과: {payload.get('wrongProblemCount')}/{payload.get('totalProblems')}개 오답)")
+            send_telegram_message(TELEGRAM_CHAT_ID, telegram_report)
                     
         elif action == 'reject':
             worksheet = target_sheet.worksheet("과제반려현황")
@@ -362,15 +459,10 @@ def update_status():
             kst_now = datetime.now(ZoneInfo('Asia/Seoul'))
             rejection_timestamp_str = kst_now.strftime('%Y-%m-%d %H:%M:%S')
             
-            # 3) 사용자 헤더 순서: 클래스, 이름, 과제명, 반려사유, 반려시간, 과제ID, 학생ID
             new_row_data = [
-                payload.get('className'),
-                payload.get('studentName'),
-                payload.get('assignmentName'),
-                payload.get('reason'),
-                rejection_timestamp_str,
-                payload.get('submissionId'),
-                student_id  # G열에 학생ID 추가
+                student_class, student_name, assignment_name,
+                payload.get('reason'), rejection_timestamp_str,
+                payload.get('submissionId'), student_id
             ]
             
             df = get_sheet_as_df(worksheet)
@@ -382,13 +474,19 @@ def update_status():
                 worksheet.append_row(new_row_data, value_input_option='USER_ENTERED')
                 message = "반려 정보가 저장되었습니다."
 
-            # SMS 발송 로직
-            student_info = roster_df[(roster_df['학생이름'] == payload.get('studentName')) & (roster_df['클래스'] == payload.get('className'))]
+            student_info = roster_df[(roster_df['학생이름'] == student_name) & (roster_df['클래스'] == student_class)]
             if not student_info.empty:
                 phone_number = str(student_info.iloc[0]['학생전화'])
                 if phone_number:
-                    sms_message = f"[김한이수학] {payload.get('assignmentName')}이(가) 반려되었습니다. ({payload.get('reason')})"
+                    sms_message = f"[김한이수학] {assignment_name}이(가) 반려되었습니다. ({payload.get('reason')})"
                     send_sms_aligo(phone_number, sms_message)
+            
+            # ✨ [추가] 관리자에게 텔레그램으로 '반려' 보고
+            telegram_report = (f"❗️ <b>{teacher_name} 선생님</b>\n"
+                               f"{student_class} {student_name} 학생\n"
+                               f"'{assignment_name}' 반려 처리\n"
+                               f"(사유: {payload.get('reason')})")
+            send_telegram_message(TELEGRAM_CHAT_ID, telegram_report)
 
         header = source_worksheet.row_values(1)
         teacher_status_col = header.index('교사확인상태') + 1
@@ -787,11 +885,12 @@ def handle_staff_login():
     user_id = data.get('id')
     password = data.get('password')
 
-    user_info = STAFF_CREDENTIALS.get(user_id) # [비밀번호, 역할] 리스트를 가져옴
+    user_info = STAFF_CREDENTIALS.get(user_id)
 
-    # ID가 존재하고 비밀번호가 일치하는지 확인
     if user_info and user_info[0] == password:
-        session['user_role'] = user_info[1] # ID 대신 '역할'을 세션에 저장
+        # ✨ [수정] 역할과 함께 '사용자 ID'도 세션에 저장합니다.
+        session['user_id'] = user_id
+        session['user_role'] = user_info[1]
         
         redirect_url = '/admin' if session['user_role'] == 'admin' else '/grader'
         return jsonify({"success": True, "redirect_url": redirect_url})
@@ -800,7 +899,9 @@ def handle_staff_login():
 
 @app.route('/staff_logout')
 def staff_logout():
+    # ✨ [수정] 로그아웃 시 ID와 역할 정보를 모두 삭제합니다.
     session.pop('user_id', None)
+    session.pop('user_role', None)
     return redirect(url_for('staff_login_page'))
 
 
