@@ -134,6 +134,8 @@ def send_sms_aligo(phone_number, message):
     except Exception as e:
         print(f"🚨 SMS 발송 중 예외 발생: {e}")
 
+# 'Homework_Portal.py' 파일에서 이 함수 전체를 찾아 아래 코드로 교체하세요.
+
 def run_worker():
     # --- 1. 새로운 과제 처리 ---
     try:
@@ -194,7 +196,6 @@ def run_worker():
                             message = f"[김한이수학] {assignment_name} 제출 완료! ({status})"
                             send_sms_aligo(phone_number, message)
 
-                            # ✨ [추가] 관리자에게 텔레그램으로 제출 보고
                             telegram_report = f"✅ <b>{student_class} {student_name}</b>\n{assignment_name} 제출 완료 ({status})"
                             send_telegram_message(TELEGRAM_CHAT_ID, telegram_report)
                     else:
@@ -205,7 +206,7 @@ def run_worker():
         print(f"🚨 [Worker/과제처리] 작업 중 오류 발생: {e}")
 
 
-    # --- 2. 매일 오전 11시에 미제출 알림 발송 (로직 수정) ---
+    # --- 2. 매일 오전 11시에 미제출 알림 발송 (로직 수정 및 안전장치 추가) ---
     global LAST_NOTIFICATION_DATE
     
     kst_now = datetime.now(ZoneInfo('Asia/Seoul'))
@@ -220,6 +221,10 @@ def run_worker():
             non_submission_sheet = gc.open_by_key(NON_SUBMISSION_SHEET_ID).worksheet("미제출현황")
             roster_sheet = gc.open_by_key(STUDENT_DB_ID).worksheet("(통합) 학생DB")
             
+            # [추가] 문자 발송 로그를 기록하고 확인할 시트
+            log_sheet = gc.open_by_key(TARGET_SHEET_ID).worksheet("문자발송로그")
+            log_df = get_sheet_as_df(log_sheet)
+
             non_submission_df = get_sheet_as_df(non_submission_sheet)
             roster_df = get_sheet_as_df(roster_sheet)
 
@@ -231,13 +236,31 @@ def run_worker():
                 print("  - 알림을 보낼 미제출 과제가 없습니다.")
             else:
                 reminders = non_submission_df.groupby(['클래스', '이름'])['미제출과제번호'].apply(list).reset_index()
-                print(f"  - 총 {len(reminders)}명의 학생에게 미제출 알림을 발송합니다.")
+                print(f"  - 총 {len(reminders)}명의 학생에게 미제출 알림 발송을 시도합니다.")
 
                 for index, row in reminders.iterrows():
                     class_name = row['클래스']
                     student_name = row['이름']
-                    hw_numbers = ", ".join(sorted(row['미제출과제번호']))
                     
+                    # [추가] 오늘 날짜(KST)를 기준으로 이미 발송 기록이 있는지 확인
+                    today_str = kst_now.strftime('%Y-%m-%d')
+                    already_sent = False
+                    if not log_df.empty and '이름' in log_df.columns:
+                        # 이름, 클래스, 날짜, 메시지 종류가 모두 일치하는 기록을 찾음
+                        sent_log = log_df[
+                            (log_df['이름'] == student_name) &
+                            (log_df['클래스'] == class_name) &
+                            (log_df['발송일'] == today_str) &
+                            (log_df['종류'] == '미제출알림')
+                        ]
+                        if not sent_log.empty:
+                            already_sent = True
+                    
+                    if already_sent:
+                        print(f"  - [SKIP] {class_name} {student_name} 학생은 오늘 이미 미제출 알림을 받았습니다.")
+                        continue # 이미 보냈으면 다음 학생으로 넘어감
+
+                    hw_numbers = ", ".join(sorted(row['미제출과제번호']))
                     student_info = roster_df[(roster_df['클래스'] == class_name) & (roster_df['학생이름'] == student_name)]
                     
                     if not student_info.empty:
@@ -246,81 +269,25 @@ def run_worker():
                             message = f"[김한이수학] 과제 {hw_numbers}가 미제출 중.....😰"
                             print(f"  - {class_name} {student_name} 학생에게 발송...")
                             send_sms_aligo(phone_number, message)
+                            
+                            # [추가] 발송 성공 후 로그 기록
+                            log_row = [today_str, class_name, student_name, '미제출알림', message]
+                            log_sheet.append_row(log_row, value_input_option='USER_ENTERED')
+
                             notification_sent_students.append(f"{class_name} {student_name}")
                     else:
                         print(f"  - ⚠️ {class_name} {student_name} 학생을 학생DB에서 찾을 수 없습니다.")
             
-            # ✨ [변경] 발송자 명단을 SMS가 아닌 텔레그램으로 관리자에게 보고
+            # [수정] 관리자에게는 "텔레그램"으로만 보고
             if notification_sent_students:
                 report_message = f"[김한이수학 미제출알림 발송완료]\n총 {len(notification_sent_students)}명\n\n" + "\n".join(notification_sent_students)
                 telegram_report_title = f"🔔 <b>미제출 과제 알림 요약 ({kst_now.strftime('%m/%d')})</b>\n\n"
                 print(f"  - 관리자에게 텔레그램으로 발송자 명단 보고 중...")
                 send_telegram_message(TELEGRAM_CHAT_ID, telegram_report_title + report_message)
             else:
-                report_message = "[김한이수학 미제출알림] 오늘은 발송할 미제출 학생이 없습니다."
+                # 미제출 학생이 없거나, 모두 이미 발송된 경우
+                report_message = f"[김한이수학 미제출알림] {kst_now.strftime('%m/%d')} 신규 발송 대상 학생이 없습니다."
                 send_telegram_message(TELEGRAM_CHAT_ID, report_message)
-            
-            LAST_NOTIFICATION_DATE = kst_now.date()
-            print(f"🎉 미제출 과제 알림 발송 작업을 완료했습니다. ({LAST_NOTIFICATION_DATE}) 다음 알림은 내일입니다.\n")
-
-        except Exception as e:
-            print(f"🚨 [Worker/미제출알림] 작업 중 오류 발생: {e}\n")
-
-
-    # --- 2. 매일 오전 11시에 미제출 알림 발송 (로직 수정) ---
-    global LAST_NOTIFICATION_DATE
-    
-    kst_now = datetime.now(ZoneInfo('Asia/Seoul'))
-    
-    # FIX: 알림 시간을 오전 11시로 변경
-    if kst_now.hour >= 11 and LAST_NOTIFICATION_DATE != kst_now.date():
-        print("\n✨ 미제출 과제 알림 발송 시간입니다. (11시) 작업을 시작합니다.")
-        
-        notification_sent_students = []  # 4) 발송자 명단을 저장할 리스트
-        
-        try:
-            gc = authenticate_gsheets()
-            non_submission_sheet = gc.open_by_key(NON_SUBMISSION_SHEET_ID).worksheet("미제출현황")
-            roster_sheet = gc.open_by_key(STUDENT_DB_ID).worksheet("(통합) 학생DB")
-            
-            non_submission_df = get_sheet_as_df(non_submission_sheet)
-            roster_df = get_sheet_as_df(roster_sheet)
-
-            non_submission_df.dropna(subset=['미제출과제번호'], inplace=True)
-            non_submission_df = non_submission_df[non_submission_df['미제출과제번호'] != '']
-            non_submission_df['미제출과제번호'] = non_submission_df['미제출과제번호'].astype(str)
-            
-            if non_submission_df.empty:
-                print("  - 알림을 보낼 미제출 과제가 없습니다.")
-            else:
-                reminders = non_submission_df.groupby(['클래스', '이름'])['미제출과제번호'].apply(list).reset_index()
-                print(f"  - 총 {len(reminders)}명의 학생에게 미제출 알림을 발송합니다.")
-
-                for index, row in reminders.iterrows():
-                    class_name = row['클래스']
-                    student_name = row['이름']
-                    hw_numbers = ", ".join(sorted(row['미제출과제번호']))
-                    
-                    student_info = roster_df[(roster_df['클래스'] == class_name) & (roster_df['학생이름'] == student_name)]
-                    
-                    if not student_info.empty:
-                        phone_number = str(student_info.iloc[0]['학생전화'])
-                        if phone_number:
-                            message = f"[김한이수학] 과제 {hw_numbers}가 미제출 중.....😰"
-                            print(f"  - {class_name} {student_name} 학생에게 발송...")
-                            send_sms_aligo(phone_number, message)
-                            notification_sent_students.append(f"{class_name} {student_name}")  # 발송자 명단에 추가
-                    else:
-                        print(f"  - ⚠️ {class_name} {student_name} 학생을 학생DB에서 찾을 수 없습니다.")
-            
-            # 4) 발송자 명단을 관리자에게 보고
-            if notification_sent_students:
-                report_message = f"[김한이수학 미제출알림 발송완료]\n총 {len(notification_sent_students)}명\n\n" + "\n".join(notification_sent_students)
-                print(f"  - 관리자에게 발송자 명단 보고 중...")
-                send_sms_aligo("01097559412", report_message)
-            else:
-                report_message = "[김한이수학 미제출알림] 오늘은 발송할 미제출 학생이 없습니다."
-                send_sms_aligo("01097559412", report_message)
             
             LAST_NOTIFICATION_DATE = kst_now.date()
             print(f"🎉 미제출 과제 알림 발송 작업을 완료했습니다. ({LAST_NOTIFICATION_DATE}) 다음 알림은 내일입니다.\n")
