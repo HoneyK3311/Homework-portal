@@ -54,7 +54,6 @@ STAFF_CREDENTIALS = {
     "윤하연": ["53077146", "teacher"]  # D 선생님
     # 필요한 만큼 "ID": ["비번", "teacher"] 형식으로 계속 추가...
 }
-
 # --- 텔레그램 메시지 전송 함수 ---
 def send_telegram_message(chat_id, message):
     """지정된 채팅 ID로 텔레그램 메시지를 전송합니다."""
