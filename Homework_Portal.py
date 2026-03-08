@@ -22,10 +22,10 @@ LAST_NOTIFICATION_DATE = None
 # --- 전역 설정 ---
 SERVICE_ACCOUNT_FILE = 'sheets_service.json'
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-SOURCE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1x44sXm7HUKBCymIMGXVRLfOUgf-o-QIgJFxklSQHMW8/edit?usp=sharing"
+SOURCE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1-9RECRW9CY0TExlsVvTNRVqAonHh5Apyjq18HEwOPII/edit?usp=sharing"
 STUDENT_DB_ID = "1Od9PfHV39MSfwfUgWtPun0Y9zCqAdURc-iwd2n0rgBI"
 TARGET_SHEET_ID = "1VROqIZ2GmAlQSdw8kZyd_rC6oP_nqTsuVEnWIi0rS24"
-NON_SUBMISSION_SHEET_ID = "1x44sXm7HUKBCymIMGXVRLfOUgf-o-QIgJFxklSQHMW8"
+NON_SUBMISSION_SHEET_ID = "1-9RECRW9CY0TExlsVvTNRVqAonHh5Apyjq18HEwOPII"
 
 # --- 워크시트 이름 ---
 SOURCE_WORKSHEET_NAME = "(탈리)과제제출"
