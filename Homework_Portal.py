@@ -643,6 +643,12 @@ def run_worker():
 
 def background_worker_task():
     print("✅ 백그라운드 작업(문자 스케줄러) 루프를 시작합니다.")
+    
+    # ✨ 렌더(Gunicorn) 환경을 위한 해결책! 
+    # 백그라운드 스레드가 켜지자마자 무조건 1회 캐싱을 돌립니다.
+    print("🚀 렌더 서버 부팅 감지... 초기 데이터 캐싱을 시작합니다.")
+    refresh_global_cache()
+    
     while True:
         try:
             run_worker()
