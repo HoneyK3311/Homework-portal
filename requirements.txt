@@ -6,3 +6,5 @@ gunicorn
 requests
 oauth2client
 pytz
+SQLAlchemy
+psycopg2-binary
