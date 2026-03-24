@@ -421,11 +421,25 @@ def get_admin_dashboard_data():
     if session.get('user_role') != 'admin': return jsonify({"error": "Unauthorized"}), 403
     
     try:
-        # 기존 Pandas 로직을 유지하되, 
         # 느려터진 gspread 대신 DB에서 pd.read_sql 로 빛의 속도로 DataFrame을 만듭니다.
-        roster_df = pd.read_sql(text('SELECT "학생이름", "클래스" FROM students WHERE "현재상태" = \'등록중\''), engine)
-        submissions_df = pd.read_sql(text('SELECT "과제명", s."학생이름", "제출상태", "교사확인상태" FROM homework_logs h JOIN students s ON h."학생ID" = s."학생ID" WHERE "교사확인상태" != \'반려\''), engine)
-        deadlines_df = pd.read_sql(text('SELECT "클래스", "과제명", "제출기한" FROM homework_definitions'), engine)
+        with engine.connect() as conn:
+            # 1. ✨ 현재 시즌 파악
+            season_query = text("SELECT 마지막동기화시간 FROM sync_status WHERE 작업이름 = 'current_season'")
+            current_season = conn.execute(season_query).scalar() or "미분류"
+
+            # 2. Pandas 읽기 (SQLAlchemy 2.0 지원을 위해 conn 객체 직접 전달)
+            roster_df = pd.read_sql(text('SELECT "학생이름", "클래스" FROM students WHERE "현재상태" = \'등록중\''), conn)
+            
+            # 3. ✨ 과거 시즌 데이터 방어막 적용! (현재 시즌의 제출 현황만 쏙 뽑아옵니다)
+            sub_query = text(f'''
+                SELECT h."과제명", s."학생이름", h."제출상태", h."교사확인상태" 
+                FROM homework_logs h 
+                JOIN students s ON h."학생ID" = s."학생ID" 
+                WHERE h."교사확인상태" != '반려' 
+                  AND h."시즌" = '{current_season}'
+            ''')
+            submissions_df = pd.read_sql(sub_query, conn)
+            deadlines_df = pd.read_sql(text('SELECT "클래스", "과제명", "제출기한" FROM homework_definitions'), conn)
 
         # 컬럼명을 기존 프론트엔드가 이해하던 방식으로 매핑
         submissions_df = submissions_df.rename(columns={"학생이름": "이름을 입력해주세요. (띄어쓰기 금지)", "과제명": "과제 번호를 선택해주세요. (반드시 확인요망)"})

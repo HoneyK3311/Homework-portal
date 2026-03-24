@@ -21,28 +21,20 @@
         <p class="mt-4 text-lg font-semibold text-gray-700">대시보드 데이터를 불러오는 중...</p>
     </div>
 
-        <div id="app" class="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto hidden">
-            <header class="flex justify-between items-center mb-8">
-                <div>
-                    <h1 class="text-3xl font-bold text-gray-900">통합 관리자 뷰어</h1>
-                    <p class="text-gray-600 mt-1">전체 과제 현황을 한눈에 파악하세요.</p>
-                </div>
-                <div class="space-x-2">
-                    <a href="/" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded">
-                        Home
-                    </a>
-                    <a href="/grader" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded">
-                        채점 페이지
-                    </a>
-                    <a href="/staff_logout" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded">
-                        로그아웃
-                    </a>
-                </div>
-            </header>
+    <div id="app" class="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto hidden">
+        <header class="flex justify-between items-center mb-8">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-900">통합 관리자 뷰어</h1>
+                <p class="text-gray-600 mt-1">전체 과제 현황을 한눈에 파악하세요.</p>
             </div>
+            <div class="space-x-2">
+                <a href="/" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded">Home</a>
+                <a href="/grader" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded">채점 페이지</a>
+                <a href="/staff_logout" class="bg-gray-500 hover:bg-gray-600 text-white font-bold py-2 px-4 rounded">로그아웃</a>
+            </div>
+        </header>
 
-        <div id="summary-cards" class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-            </div>
+        <div id="summary-cards" class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8"></div>
 
         <div class="grid grid-cols-1 lg:grid-cols-5 gap-6 mb-8">
             <div class="lg:col-span-3 bg-white p-6 rounded-lg shadow-md">
