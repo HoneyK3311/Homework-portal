@@ -11,3 +11,4 @@ sheets_service.json
 Environment
 .env
 venv/
+temp.py
