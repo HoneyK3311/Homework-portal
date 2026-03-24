@@ -184,14 +184,47 @@ def handle_tally_webhook():
         submission_id = data.get('submissionId')
         created_at = data.get('createdAt')
         
-        # 탈리 필드 파싱
-        fields = {f.get('label', ''): f.get('value') for f in data.get('fields', [])}
-        student_name = fields.get('이름을 입력해주세요. (띄어쓰기 금지)')
-        class_name = fields.get('클래스를 선택해주세요.')
-        assignment_name = fields.get('과제 번호를 선택해주세요. (반드시 확인요망)')
-        # ✨ 추가: 사진 URL 받아오기
-        image_url = fields.get('과제 사진을 업로드해주세요.', '')
+        # ✨ 스마트 파서: 탈리의 복잡한 데이터를 DB에 넣기 좋게 예쁜 한글/텍스트로 번역합니다.
+        fields_data = data.get('fields', [])
+        parsed_fields = {}
+        
+        for f in fields_data:
+            label = f.get('label', '')
+            field_type = f.get('type', '')
+            raw_value = f.get('value')
+            
+            if not label: continue
+            
+            # 1. 드롭다운/객관식 처리 (ID를 한글 텍스트로 번역)
+            if field_type in ['DROPDOWN', 'CHECKBOXES', 'MULTIPLE_CHOICE']:
+                options = f.get('options', [])
+                id_to_text = {opt['id']: opt['text'] for opt in options}
+                
+                if isinstance(raw_value, list):
+                    texts = [id_to_text.get(v, str(v)) for v in raw_value]
+                    parsed_fields[label] = ", ".join(texts)
+                else:
+                    parsed_fields[label] = id_to_text.get(raw_value, str(raw_value))
+                    
+            # 2. 파일 업로드 처리 (딕셔너리에서 순수 URL만 추출)
+            elif field_type == 'FILE_UPLOAD':
+                if isinstance(raw_value, list):
+                    urls = [item.get('url', '') for item in raw_value if isinstance(item, dict) and 'url' in item]
+                    parsed_fields[label] = ", ".join(urls)
+                else:
+                    parsed_fields[label] = str(raw_value)
+                    
+            # 3. 일반 텍스트 처리
+            else:
+                parsed_fields[label] = str(raw_value) if raw_value else ""
 
+        # 번역된 데이터에서 필요한 값 꺼내기
+        student_name = parsed_fields.get('이름을 입력해주세요. (띄어쓰기 금지)', '').strip()
+        class_name = parsed_fields.get('클래스를 선택해주세요.', '').strip()
+        assignment_name = parsed_fields.get('과제 번호를 선택해주세요. (반드시 확인요망)', '').strip()
+        image_url = parsed_fields.get('과제 사진을 업로드해주세요.', '')
+
+        # 필수 정보 누락 시 종료
         if not student_name or not class_name:
             return jsonify({"status": "ignored", "reason": "Missing info"}), 200
 
@@ -202,11 +235,13 @@ def handle_tally_webhook():
             season_query = text("SELECT 마지막동기화시간 FROM sync_status WHERE 작업이름 = 'current_season'")
             season_name = conn.execute(season_query).scalar() or "미분류"
 
+            # 학생이 DB에 없을 경우 탈리 무한 재시도 방지 및 텔레그램 경고 발송
             if not student_id:
                 print(f"⚠️ 웹훅 경고: {class_name} {student_name} 학생을 DB에서 찾을 수 없음.")
-                return jsonify({"status": "student_not_found"}), 404
+                msg = f"⚠️ <b>[미등록 학생 제출]</b>\n{class_name} {student_name}\nDB에 등록되지 않은 학생이 과제를 제출했습니다."
+                send_telegram_message(TELEGRAM_CHAT_ID, msg)
+                return jsonify({"status": "student_not_found"}), 200
 
-            # ✨ 수정: image_url 컬럼 추가하여 Insert
             log_id = f"HW-{datetime.now(KST).strftime('%f')}-{student_id}"
             insert_query = text('''
                 INSERT INTO homework_logs 
