@@ -171,23 +171,23 @@ def staff_logout():
     return redirect(url_for('staff_login_page'))
 
 # ----------------------------------------------------------------
-# --- 🚀 핵심 2: 탈리 웹훅(Webhook) 수신 ---
+# --- 🚀 핵심 2: 탈리 웹훅(Webhook) 수신 (7대 기준 & 무적 파서 적용) ---
 # ----------------------------------------------------------------
 @app.route('/webhook/tally', methods=['POST'])
 def handle_tally_webhook():
-    """탈리에서 제출 시 실시간 수신하여 DB에 즉시 Insert (API 0회)"""
+    """탈리에서 제출 시 실시간 수신하여 DB에 즉시 Insert 및 학생 확인 SMS 발송"""
     payload = request.json
     if not payload: return jsonify({"error": "No payload"}), 400
 
     try:
         data = payload.get('data', {})
-        submission_id = data.get('submissionId')
+        submission_id = data.get('submissionId', 'unknown_id')
         created_at = data.get('createdAt')
         
-        # ✨ 스마트 파서: 탈리의 복잡한 데이터를 DB에 넣기 좋게 예쁜 한글/텍스트로 번역합니다.
         fields_data = data.get('fields', [])
         parsed_fields = {}
         
+        # ✨ 스마트 & 무적 파서
         for f in fields_data:
             label = f.get('label', '')
             field_type = f.get('type', '')
@@ -195,28 +195,32 @@ def handle_tally_webhook():
             
             if not label: continue
             
-            # 1. 드롭다운/객관식 처리 (ID를 한글 텍스트로 번역)
-            if field_type in ['DROPDOWN', 'CHECKBOXES', 'MULTIPLE_CHOICE']:
-                options = f.get('options', [])
-                id_to_text = {opt['id']: opt['text'] for opt in options}
-                
-                if isinstance(raw_value, list):
-                    texts = [id_to_text.get(v, str(v)) for v in raw_value]
-                    parsed_fields[label] = ", ".join(texts)
-                else:
-                    parsed_fields[label] = id_to_text.get(raw_value, str(raw_value))
+            try:
+                if field_type in ['DROPDOWN', 'CHECKBOXES', 'MULTIPLE_CHOICE', 'RADIO']:
+                    options = f.get('options', [])
+                    id_to_text = {opt.get('id'): opt.get('text', '') for opt in options if isinstance(opt, dict)}
                     
-            # 2. 파일 업로드 처리 (딕셔너리에서 순수 URL만 추출)
-            elif field_type == 'FILE_UPLOAD':
-                if isinstance(raw_value, list):
-                    urls = [item.get('url', '') for item in raw_value if isinstance(item, dict) and 'url' in item]
-                    parsed_fields[label] = ", ".join(urls)
+                    if isinstance(raw_value, list):
+                        texts = [id_to_text.get(v, str(v)) for v in raw_value if not isinstance(v, dict)]
+                        parsed_fields[label] = ", ".join(texts)
+                    else:
+                        parsed_fields[label] = id_to_text.get(raw_value, str(raw_value))
+                        
+                elif field_type == 'FILE_UPLOAD':
+                    if isinstance(raw_value, list):
+                        urls = [item.get('url', '') for item in raw_value if isinstance(item, dict) and 'url' in item]
+                        parsed_fields[label] = ", ".join(urls)
+                    else:
+                        parsed_fields[label] = str(raw_value) if raw_value else ""
+                        
                 else:
-                    parsed_fields[label] = str(raw_value)
-                    
-            # 3. 일반 텍스트 처리
-            else:
-                parsed_fields[label] = str(raw_value) if raw_value else ""
+                    if isinstance(raw_value, list):
+                        parsed_fields[label] = ", ".join([str(v) for v in raw_value])
+                    else:
+                        parsed_fields[label] = str(raw_value) if raw_value else ""
+            except Exception as inner_e:
+                print(f"⚠️ 필드 파싱 오류 ({label}): {inner_e}")
+                parsed_fields[label] = str(raw_value)
 
         # 번역된 데이터에서 필요한 값 꺼내기
         student_name = parsed_fields.get('이름을 입력해주세요. (띄어쓰기 금지)', '').strip()
@@ -224,24 +228,39 @@ def handle_tally_webhook():
         assignment_name = parsed_fields.get('과제 번호를 선택해주세요. (반드시 확인요망)', '').strip()
         image_url = parsed_fields.get('과제 사진을 업로드해주세요.', '')
 
-        # 필수 정보 누락 시 종료
         if not student_name or not class_name:
             return jsonify({"status": "ignored", "reason": "Missing info"}), 200
 
         with engine.begin() as conn:
-            st_query = text('SELECT "학생ID" FROM students WHERE "학생이름" = :name AND "클래스" = :cls')
-            student_id = conn.execute(st_query, {"name": student_name, "cls": class_name}).scalar()
-            
+            try:
+                conn.execute(text('ALTER TABLE homework_logs ALTER COLUMN image_url TYPE TEXT;'))
+            except Exception:
+                pass
+
+            # 시즌 정보 먼저 가져오기
             season_query = text("SELECT 마지막동기화시간 FROM sync_status WHERE 작업이름 = 'current_season'")
             season_name = conn.execute(season_query).scalar() or "미분류"
 
-            # 학생이 DB에 없을 경우 탈리 무한 재시도 방지 및 텔레그램 경고 발송
+            # 🎯 선생님의 7대 기준 적용: 이름, 클래스, 현재상태='등록중', 시즌 일치하는 진짜 학생 찾기
+            st_query = text('''
+                SELECT "학생ID", "학생연락처" 
+                FROM students 
+                WHERE "학생이름" = :name 
+                  AND "클래스" = :cls 
+                  AND "현재상태" = '등록중' 
+                  AND "시즌" = :season
+            ''')
+            st_result = conn.execute(st_query, {"name": student_name, "cls": class_name, "season": season_name}).fetchone()
+            
+            student_id = st_result[0] if st_result else None
+            raw_phone = st_result[1] if st_result else None
+
             if not student_id:
-                print(f"⚠️ 웹훅 경고: {class_name} {student_name} 학생을 DB에서 찾을 수 없음.")
-                msg = f"⚠️ <b>[미등록 학생 제출]</b>\n{class_name} {student_name}\nDB에 등록되지 않은 학생이 과제를 제출했습니다."
+                msg = f"⚠️ <b>[미등록 학생 제출]</b>\n{class_name} {student_name}\n등록중인 재원생이 아닙니다. (또는 DB 누락)"
                 send_telegram_message(TELEGRAM_CHAT_ID, msg)
                 return jsonify({"status": "student_not_found"}), 200
 
+            # 1. 과제 제출 내역 DB 저장
             log_id = f"HW-{datetime.now(KST).strftime('%f')}-{student_id}"
             insert_query = text('''
                 INSERT INTO homework_logs 
@@ -252,14 +271,33 @@ def handle_tally_webhook():
                 "log_id": log_id, "st_id": student_id, "hw_id": submission_id, "name": assignment_name,
                 "season": season_name, "sub_at": created_at, "sub_status": "정상제출", "t_status": "미확인", "img": image_url
             })
+
+            # 2. 학생에게 "제출 완료" SMS 발송 (7대 기준에서 가져온 찐 번호 사용)
+            if raw_phone:
+                phone_str = str(raw_phone).strip()
+                if phone_str.endswith('.0'): phone_str = phone_str[:-2]
+                clean_phone = ''.join(filter(str.isdigit, phone_str))
+                
+                # 심폐소생술: 10으로 시작하면 무조건 0 붙여주기
+                if clean_phone.startswith('10') and len(clean_phone) == 10:
+                    clean_phone = '0' + clean_phone
+                    
+                if clean_phone.startswith('010') and len(clean_phone) >= 10:
+                    sms_msg = f"[김한이수학] {student_name} 학생, '{assignment_name}' 과제가 정상적으로 제출되었습니다. 고생했어요! 😊"
+                    send_sms_aligo(clean_phone, sms_msg)
+                else:
+                    print(f"⚠️ {student_name} 학생 번호 형식 오류로 제출확인 문자 발송 실패: {clean_phone}")
         
+        # 선생님께 텔레그램 알림 발송
         msg = f"📩 <b>[새 과제 도착]</b>\n{class_name} {student_name}\n과제명: {assignment_name}"
         send_telegram_message(TELEGRAM_CHAT_ID, msg)
         
         return jsonify({"status": "success"}), 200
 
     except Exception as e:
-        print(f"🚨 웹훅 처리 중 오류: {e}")
+        import traceback
+        error_trace = traceback.format_exc()
+        print(f"🚨 웹훅 치명적 오류:\n{error_trace}")
         return jsonify({"error": str(e)}), 500
 
 # ----------------------------------------------------------------
@@ -278,17 +316,15 @@ def get_data():
     try:
         submissions = []
         with engine.connect() as conn:
-            # ✨ 1. DB에서 '현재 시즌'이 무엇인지 파악합니다.
             season_query = text("SELECT 마지막동기화시간 FROM sync_status WHERE 작업이름 = 'current_season'")
             current_season = conn.execute(season_query).scalar() or "미분류"
 
-            # ✨ 2. WHERE 조건에 `h."시즌" = :season`을 추가하여 옛날 데이터를 쳐냅니다!
+            # 🎯 요구사항 3: 반려된 과제도 이번 시즌이면 무조건 불러옵니다! (WHERE 절에서 '반려 제외' 조건 삭제)
             query = text('''
                 SELECT h."과제ID", h."제출일시", s."학생이름", s."클래스", h."과제명", h."제출상태", h."교사확인상태", s."level", h.image_url
                 FROM homework_logs h
                 JOIN students s ON h."학생ID" = s."학생ID"
-                WHERE h."교사확인상태" != '반려'
-                  AND h."시즌" = :season 
+                WHERE h."시즌" = :season 
                 ORDER BY h."제출일시" DESC
             ''')
             result = conn.execute(query, {"season": current_season})
@@ -302,9 +338,8 @@ def get_data():
                 try:
                     if submitted_at_raw:
                         dt = pd.to_datetime(submitted_at_raw)
-                        if dt.tzinfo is None:
-                            dt = dt + pd.Timedelta(hours=9)
-                        else:
+                        # 탈리 웹훅 등 꼬리표(Z)가 있는 시간만 한국 시간으로 변환하고, 과거 데이터는 그대로 씁니다.
+                        if dt.tzinfo is not None:
                             dt = dt.tz_convert('Asia/Seoul')
                         kst_time_str = dt.strftime('%Y-%m-%d %H:%M:%S')
                 except Exception:
@@ -395,13 +430,26 @@ def update_status():
             ]
             worksheet.append_row(new_row_data, value_input_option='USER_ENTERED')
             
-            # DB에서 번호 조회 후 SMS 전송
+            # ✨ [신규 복구] 반려 문자도 무적의 '7대 기준'과 '번호 필터링' 적용!
             with engine.connect() as conn:
-                phone_query = text('SELECT student_phone FROM students WHERE "학생ID"=:id')
-                phone = conn.execute(phone_query, {"id": student_id_val}).scalar()
-                if phone:
-                    sms_msg = f"[김한이수학] {assignment_name}이 반려되었습니다. ({payload.get('reason')})"
-                    send_sms_aligo(phone, sms_msg)
+                # 영어 유령 컬럼 대신, 찐 데이터인 "학생연락처"를 꺼내옵니다.
+                phone_query = text('SELECT "학생연락처" FROM students WHERE "학생ID"=:id')
+                raw_phone = conn.execute(phone_query, {"id": student_id_val}).scalar()
+                
+                if raw_phone:
+                    phone_str = str(raw_phone).strip()
+                    if phone_str.endswith('.0'): phone_str = phone_str[:-2]
+                    clean_phone = ''.join(filter(str.isdigit, phone_str))
+                    
+                    # 심폐소생술: 10으로 시작하면 0을 붙여줍니다.
+                    if clean_phone.startswith('10') and len(clean_phone) == 10:
+                        clean_phone = '0' + clean_phone
+                        
+                    if clean_phone.startswith('010') and len(clean_phone) >= 10:
+                        sms_msg = f"[김한이수학] {student_name} 학생, '{assignment_name}' 과제가 반려되었습니다. (사유: {payload.get('reason')})"
+                        send_sms_aligo(clean_phone, sms_msg)
+                    else:
+                        print(f"⚠️ 반려 문자 실패: {student_name} 학생 번호 오류 ({clean_phone})")
             
             msg = f"❗️ <b>{teacher_name} 선생님</b>\n{student_class} {student_name}\n'{assignment_name}' 반려 처리\n(사유: {payload.get('reason')})"
             send_telegram_message(TELEGRAM_CHAT_ID, msg)
@@ -563,15 +611,13 @@ def run_worker():
     global LAST_NOTIFICATION_DATE
     kst_now = datetime.now(ZoneInfo('Asia/Seoul'))
     
-    # 매일 오전 11시에 한 번만 실행 (부팅 시 최초 1회 발송 로직 포함)
-    if kst_now.hour >= 11 and LAST_NOTIFICATION_DATE != kst_now.date():
-        print("\n✨ 미제출 과제 알림 발송 시간입니다. 작업을 시작합니다.")
+    # 11시 정각 대역에만 1회 발송
+    if kst_now.hour == 11 and LAST_NOTIFICATION_DATE != kst_now.date():
+        print("\n✨ 미제출 과제 알림 발송 시간(11시)입니다. 작업을 시작합니다.")
         notification_sent_students = []
         
         try:
             gc = authenticate_gsheets()
-            
-            # --- 1. '시즌' 탭에서 오늘 날짜에 해당하는 '현재 시즌 시트ID' 찾기 ---
             season_sheet = gc.open_by_key(TARGET_SHEET_ID).worksheet("시즌")
             season_df = get_sheet_as_df(season_sheet)
             
@@ -579,70 +625,50 @@ def run_worker():
             current_season_sheet_id = None
             current_season_name = "알수없음"
             
-            print(f"\n  🔍 [디버그] 오늘 날짜({today})가 포함된 시즌을 찾습니다...")
-            
             for _, row in season_df.iterrows():
                 try:
-                    # ✨ 사진에 맞춰서 헤더(컬럼명)를 완벽하게 매칭했습니다!
                     start_str = str(row.get('시작일', '')).strip().replace('.', '-').replace('/', '-')
                     end_str = str(row.get('종료일', '')).strip().replace('.', '-').replace('/', '-')
-                    sheet_id = str(row.get('과제제출_파일ID', '')).strip()  # <- 범인 검거 1
-                    season_name = str(row.get('시즌이름', '')).strip()      # <- 범인 검거 2
+                    sheet_id = str(row.get('과제제출_파일ID', '')).strip()
+                    season_name = str(row.get('시즌이름', '')).strip()
                     
                     if start_str and end_str and sheet_id:
-                        # 텍스트가 아닌 진짜 날짜(Date) 객체로 변환하여 KST 오늘 날짜와 비교
                         start_date = pd.to_datetime(start_str).date()
                         end_date = pd.to_datetime(end_str).date()
-                        
-                        print(f"  👀 [탐색 중] 읽어온 데이터 -> 시즌: {season_name}, 기간: {start_date} ~ {end_date}")
-                        
-                        # 오늘 날짜가 시작일과 종료일 사이에 있다면!
                         if start_date <= today <= end_date:
                             current_season_sheet_id = sheet_id
                             current_season_name = season_name
-                            print(f"  - 🎯 빙고! 현재 시즌을 찾았습니다: {current_season_name} (시트ID: {current_season_sheet_id})")
                             break
-                except Exception as e:
-                    print(f"  - ⚠️ [경고] '{season_name}' 행의 날짜 형식을 읽지 못했습니다. (오류: {e})")
+                except Exception:
                     continue 
                     
             if not current_season_sheet_id:
-                print("  - 🚨 [결과] '시즌' 시트를 다 뒤졌지만 오늘 날짜가 포함된 시즌이 없습니다! 발송을 종료합니다.")
                 LAST_NOTIFICATION_DATE = kst_now.date() 
                 return
 
-            # --- 2. 찾아낸 현재 시즌 시트에서 '미제출현황' 열기 ---
             try:
                 non_submission_sheet = gc.open_by_key(current_season_sheet_id).worksheet("미제출현황")
-            except Exception as e:
-                print(f"  - 🚨 해당 시즌 시트에서 '미제출현황' 탭을 찾을 수 없습니다: {e}")
+            except Exception:
                 LAST_NOTIFICATION_DATE = kst_now.date()
                 return
 
-            # 발송 로그는 통합 파일(TARGET_SHEET_ID)에 계속 누적 기록
             log_sheet = gc.open_by_key(TARGET_SHEET_ID).worksheet("문자발송로그")
-            
             non_submission_df = get_sheet_as_df(non_submission_sheet)
             log_df = get_sheet_as_df(log_sheet)
 
-            # --- 3. 미제출자 필터링 및 SMS 발송 ---
             non_submission_df.dropna(subset=['미제출과제번호'], inplace=True)
             non_submission_df = non_submission_df[non_submission_df['미제출과제번호'] != '']
             non_submission_df['미제출과제번호'] = non_submission_df['미제출과제번호'].astype(str)
             
-            if non_submission_df.empty:
-                print(f"  - [{current_season_name}] 알림을 보낼 미제출 과제가 없습니다.")
-            else:
+            if not non_submission_df.empty:
                 reminders = non_submission_df.groupby(['클래스', '이름'])['미제출과제번호'].apply(list).reset_index()
                 today_str = kst_now.strftime('%Y-%m-%d')
 
-                # DB 직통 연결로 전화번호 초고속 조회
                 with engine.connect() as conn:
                     for index, row in reminders.iterrows():
                         class_name = row['클래스']
                         student_name = row['이름']
                         
-                        # 오늘 이미 보냈는지 중복 확인 (로그 시트)
                         already_sent = False
                         if not log_df.empty and '이름' in log_df.columns:
                             sent_log = log_df[
@@ -653,27 +679,39 @@ def run_worker():
                             ]
                             if not sent_log.empty: already_sent = True
                         
-                        if already_sent:
-                            print(f"  - [SKIP] {class_name} {student_name} 학생은 오늘 이미 알림을 받았습니다.")
-                            continue
+                        if already_sent: continue
 
-                        # DB에서 전화번호 추출
-                        st_query = text('SELECT student_phone FROM students WHERE "학생이름"=:n AND "클래스"=:c')
-                        phone_number = conn.execute(st_query, {"n": student_name, "c": class_name}).scalar()
+                        # 🎯 선생님의 7대 기준 적용: 퇴원생 걸러내고, 진짜 "학생연락처"만 가져옵니다!
+                        st_query = text('''
+                            SELECT "학생연락처" 
+                            FROM students 
+                            WHERE "학생이름" = :n 
+                              AND "클래스" = :c 
+                              AND "현재상태" = '등록중' 
+                              AND "시즌" = :season
+                        ''')
+                        raw_phone = conn.execute(st_query, {"n": student_name, "c": class_name, "season": current_season_name}).scalar()
 
-                        if phone_number:
-                            hw_numbers = ", ".join(sorted(row['미제출과제번호']))
-                            message = f"[김한이수학] 과제 {hw_numbers}가 미제출 중.....😰"
+                        if raw_phone:
+                            phone_str = str(raw_phone).strip()
+                            if phone_str.endswith('.0'): phone_str = phone_str[:-2]
+                            clean_phone = ''.join(filter(str.isdigit, phone_str))
                             
-                            send_sms_aligo(phone_number, message)
-                            
-                            # 로그 시트에 발송 기록 추가
-                            log_row = [today_str, class_name, student_name, '미제출알림', message]
-                            log_sheet.append_row(log_row, value_input_option='USER_ENTERED')
-                            
-                            notification_sent_students.append(f"{class_name} {student_name}")
+                            # 심폐소생술: 10으로 시작하면 즉석에서 무조건 0을 붙여 010으로 만듦
+                            if clean_phone.startswith('10') and len(clean_phone) == 10:
+                                clean_phone = '0' + clean_phone
+
+                            if clean_phone.startswith('010') and len(clean_phone) >= 10:
+                                hw_numbers = ", ".join(sorted(row['미제출과제번호']))
+                                message = f"[김한이수학] 과제 {hw_numbers}가 미제출 중.....😰"
+                                
+                                send_sms_aligo(clean_phone, message)
+                                
+                                log_row = [today_str, class_name, student_name, '미제출알림', message]
+                                log_sheet.append_row(log_row, value_input_option='USER_ENTERED')
+                                notification_sent_students.append(f"{class_name} {student_name}")
                         else:
-                            print(f"  - ⚠️ {class_name} {student_name} 학생의 전화번호를 DB에서 찾을 수 없습니다.")
+                            print(f"  - ⚠️ {class_name} {student_name} 학생 정보 없음 (퇴원생이거나 번호 누락)")
 
             # 관리자 텔레그램 보고
             if notification_sent_students:
@@ -683,7 +721,6 @@ def run_worker():
             else:
                 send_telegram_message(TELEGRAM_CHAT_ID, f"[{current_season_name} 미제출알림] {kst_now.strftime('%m/%d')} 신규 발송 대상자가 없습니다.")
             
-            # 발송 완료 마킹
             LAST_NOTIFICATION_DATE = kst_now.date()
             print(f"🎉 미제출 알림 발송 완료. 다음 알림은 내일입니다.\n")
 
