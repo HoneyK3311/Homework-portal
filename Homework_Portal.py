@@ -610,10 +610,16 @@ def get_admin_dashboard_data():
 def run_worker():
     global LAST_NOTIFICATION_DATE
     kst_now = datetime.now(ZoneInfo('Asia/Seoul'))
-    
-    # 11시 정각 대역에만 1회 발송
-    if kst_now.hour == 11 and LAST_NOTIFICATION_DATE != kst_now.date():
-        print("\n✨ 미제출 과제 알림 발송 시간(11시)입니다. 작업을 시작합니다.")
+    today = kst_now.date()  # 오늘 날짜 (예: 2026-03-27)
+
+    # 🎯 잠금장치 1: 11시 대역이고 + 오늘 날짜 도장이 아직 안 찍혔을 때만 진입
+    if kst_now.hour == 11 and LAST_NOTIFICATION_DATE != today:
+        
+        # 🔥 핵심: 로직 시작 직후에 바로 오늘 날짜를 저장! 
+        # 이렇게 하면 1분 뒤에 다시 워커가 깨어나도 이 if문을 통과 못 합니다.
+        LAST_NOTIFICATION_DATE = today 
+        
+        print(f"\n✨ [{today} 11:00] 미제출 알림 발송 업무를 시작합니다.")
         notification_sent_students = []
         
         try:
@@ -718,29 +724,27 @@ def run_worker():
                 report_message = f"[{current_season_name} 미제출알림 발송완료]\n총 {len(notification_sent_students)}명\n\n" + "\n".join(notification_sent_students)
                 telegram_report_title = f"🔔 <b>미제출 과제 알림 요약 ({kst_now.strftime('%m/%d')})</b>\n\n"
                 send_telegram_message(TELEGRAM_CHAT_ID, telegram_report_title + report_message)
-            else:
-                send_telegram_message(TELEGRAM_CHAT_ID, f"[{current_season_name} 미제출알림] {kst_now.strftime('%m/%d')} 신규 발송 대상자가 없습니다.")
             
-            LAST_NOTIFICATION_DATE = kst_now.date()
-            print(f"🎉 미제출 알림 발송 완료. 다음 알림은 내일입니다.\n")
+            print(f"✅ {today} 모든 발송 스케줄이 안전하게 종료되었습니다.")
 
         except Exception as e:
-            print(f"🚨 [Worker/미제출알림] 오류 발생: {e}\n")
+            # 🚨 만약 에러가 나서 발송에 실패했다면, 내일 다시 시도할 수 있도록 초기화하거나 로그를 남깁니다.
+            print(f"🚨 [Worker/미제출알림] 실행 중 오류 발생: {e}\n")
 
 def background_worker_task():
     print("✅ 백그라운드 작업(문자 스케줄러) 루프를 시작합니다.")
-    
-    # ✨ 렌더(Gunicorn) 환경을 위한 해결책! 
-    # 백그라운드 스레드가 켜지자마자 무조건 1회 캐싱을 돌립니다.
-    print("🚀 렌더 서버 부팅 감지... 초기 데이터 캐싱을 시작합니다.")
-    refresh_global_cache()
+    refresh_global_cache() # 부팅 시 초기 캐싱
     
     while True:
         try:
+            # 🎯 잠금장치 2: 워커 실행 주기를 10분으로 변경
             run_worker()
         except Exception as e:
             print(f"🚨 백그라운드 스레드 오류: {e}")
-        thread_time.sleep(60)
+            
+        # 600초(10분) 대기. 11시에 한 번 실행되면 다음 체크는 11시 10분입니다.
+        # 이미 LAST_NOTIFICATION_DATE가 찍혀있으므로 11시 10분에는 실행되지 않고 통과합니다.
+        thread_time.sleep(600)
 
 worker_thread = threading.Thread(target=background_worker_task, daemon=True)
 worker_thread.start()

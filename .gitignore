@@ -12,3 +12,5 @@ Environment
 .env
 venv/
 temp.py
+test_phone.py
+get_wrong_answers.py
