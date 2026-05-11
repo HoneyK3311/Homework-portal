@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>{{ hw_name }} 해설강의 - 김한이수학</title>
+    <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v3.2.1/dist/web/static/pretendard.css" />
+    <style>
+        :root {
+            --primary-color: #2c3e50;
+            --accent-color: #3498db;
+            --bg-color: #f8f9fa;
+            --card-bg: #ffffff;
+            --text-main: #1a1a1a;
+            --text-sub: #6c757d;
+            --border-color: #e9ecef;
+        }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Pretendard', -apple-system, BlinkMacSystemFont, system-ui, Roboto, 'Helvetica Neue', 'Segoe UI', 'Apple SD Gothic Neo', 'Noto Sans KR', 'Malgun Gothic', sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            padding-bottom: 60px;
+        }
+
+        /* --- 상단 헤더 영역 --- */
+        .header {
+            text-align: center;
+            padding: 30px 0;
+            margin-bottom: 20px;
+        }
+
+        .brand-badge {
+            display: inline-block;
+            background-color: var(--primary-color);
+            color: white;
+            font-size: 0.8rem;
+            font-weight: 600;
+            padding: 4px 12px;
+            border-radius: 20px;
+            margin-bottom: 12px;
+            letter-spacing: 0.5px;
+        }
+
+        .title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin: 0 0 8px 0;
+            line-height: 1.4;
+        }
+
+        .subtitle {
+            font-size: 1rem;
+            color: var(--text-sub);
+            margin: 0;
+        }
+
+        .subtitle strong {
+            color: var(--primary-color);
+            font-weight: 600;
+        }
+
+        /* --- 문항 리스트 영역 --- */
+        .solution-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .solution-card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 16px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .solution-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        }
+
+        .question-info {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .q-num {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: var(--text-main);
+        }
+
+        .q-id {
+            font-size: 0.75rem;
+            color: #adb5bd;
+        }
+
+        /* --- 액션 버튼 영역 --- */
+        .btn {
+            display: inline-block;
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            text-decoration: none;
+            text-align: center;
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary {
+            background-color: var(--accent-color);
+            color: white;
+            box-shadow: 0 2px 4px rgba(52, 152, 219, 0.2);
+        }
+
+        .btn-primary:active {
+            transform: scale(0.98);
+            background-color: #2980b9;
+        }
+
+        .btn-disabled {
+            background-color: #f1f3f5;
+            color: #adb5bd;
+            cursor: not-allowed;
+            pointer-events: none;
+        }
+
+        /* 과제가 없을 때 텍스트 */
+        .empty-state {
+            text-align: center;
+            padding: 40px 20px;
+            color: var(--text-sub);
+            background: var(--card-bg);
+            border-radius: 12px;
+            border: 1px dashed #ced4da;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <div class="brand-badge">김한이수학</div>
+            <h1 class="title">[{{ class_name }}] {{ hw_name }}</h1>
+            <p class="subtitle"><strong>{{ student_name }}</strong> 학생 맞춤 해설강의</p>
+        </header>
+
+        <div class="solution-list">
+            {% if solutions %}
+                {% for item in solutions %}
+                <div class="solution-card">
+                    <div class="question-info">
+                        <span class="q-num">{{ item.no }}번</span>
+                        <span class="q-id">{{ item.original_id }}</span>
+                    </div>
+                    
+                    <div class="action-area">
+                        {% if item.link %}
+                            <a href="{{ item.link }}" target="_blank" rel="noopener noreferrer" class="btn btn-primary">해설 영상 재생 ▶</a>
+                        {% else %}
+                            <span class="btn btn-disabled">해설 준비 중 ⏳</span>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty-state">
+                    해당 과제에 등록된 문항 정보가 없습니다.<br>선생님께 문의해 주세요.
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>

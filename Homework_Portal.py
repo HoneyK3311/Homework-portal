@@ -28,10 +28,11 @@ KST = pytz.timezone('Asia/Seoul')
 # --- 전역 설정 ---
 SERVICE_ACCOUNT_FILE = 'sheets_service.json'
 SCOPES = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-SOURCE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1-9RECRW9CY0TExlsVvTNRVqAonHh5Apyjq18HEwOPII/edit?usp=sharing"
+SOURCE_SHEET_URL = "https://docs.google.com/spreadsheets/d/1Nonom2Ob7mouwB5E0fK6P4ifPSswjQmarW2g0rV91ko/edit?usp=sharing"
 STUDENT_DB_ID = "1Od9PfHV39MSfwfUgWtPun0Y9zCqAdURc-iwd2n0rgBI"
 TARGET_SHEET_ID = "1VROqIZ2GmAlQSdw8kZyd_rC6oP_nqTsuVEnWIi0rS24"
-NON_SUBMISSION_SHEET_ID = "1-9RECRW9CY0TExlsVvTNRVqAonHh5Apyjq18HEwOPII"
+NON_SUBMISSION_SHEET_ID = "1Nonom2Ob7mouwB5E0fK6P4ifPSswjQmarW2g0rV91ko"
+LINK_SHEET_ID = "1FhHfL6Xdd3HOpxyJ7xar-aegSEFlsOSFMhk0n02zjRA"
 
 # --- 워크시트 이름 ---
 SOURCE_WORKSHEET_NAME = "(탈리)과제제출"
@@ -59,6 +60,7 @@ STAFF_CREDENTIALS = {
 GLOBAL_CACHE = {
     'assignments': [],
     'student_levels': {},
+    'problem_links': {}, # ✨ [신규 추가] 해설 링크 담을 주머니
     'last_updated': None
 }
 
@@ -127,6 +129,22 @@ def refresh_global_cache():
                 level_map[key] = str(row.get('Level', ''))
                 
         GLOBAL_CACHE['student_levels'] = level_map
+
+        # ✨ [신규 추가] 해설 강의 링크 캐싱 시작
+        try:
+            link_sheet = gc.open_by_key(LINK_SHEET_ID).worksheet("링크")
+            link_df = get_sheet_as_df(link_sheet)
+            link_map = {}
+            for _, row in link_df.iterrows():
+                p_id = str(row.get('문항 ID', '')).strip()
+                url = str(row.get('링크', '')).strip()
+                if p_id and url:
+                    link_map[p_id] = url
+            GLOBAL_CACHE['problem_links'] = link_map
+            print(f"✅ 해설 링크 {len(link_map)}건 캐싱 완료!")
+        except Exception as e:
+            print(f"⚠️ 해설 링크 캐싱 실패 (시트 확인 필요): {e}")
+        # ✨ [신규 추가 끝]
 
         GLOBAL_CACHE['last_updated'] = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
         print(f"✅ 메모리 캐싱 완료! (과제 {len(GLOBAL_CACHE['assignments'])}건, 레벨 {len(level_map)}명)")
@@ -283,7 +301,17 @@ def handle_tally_webhook():
                     clean_phone = '0' + clean_phone
                     
                 if clean_phone.startswith('010') and len(clean_phone) >= 10:
-                    sms_msg = f"[김한이수학] {student_name} 학생, '{assignment_name}' 과제가 정상적으로 제출되었습니다. 고생했어요! 😊"
+                    # ✨ [수정됨] 해설 페이지 링크가 포함된 문자로 변경
+                    # request.host_url을 쓰면 렌더의 현재 도메인 주소를 알아서 가져옵니다.
+                    solution_url = f"{request.host_url}view_solution/{submission_id}"
+                    
+                    sms_msg = (
+                        f"[김한이수학]\n"
+                        f"[{class_name}] {student_name} 학생\n"
+                        f"'{assignment_name}' 제출 완료!\n\n"
+                        f"👇문항별 해설강의 확인하기\n"
+                        f"{solution_url}"
+                    )
                     send_sms_aligo(clean_phone, sms_msg)
                 else:
                     print(f"⚠️ {student_name} 학생 번호 형식 오류로 제출확인 문자 발송 실패: {clean_phone}")
@@ -299,6 +327,62 @@ def handle_tally_webhook():
         error_trace = traceback.format_exc()
         print(f"🚨 웹훅 치명적 오류:\n{error_trace}")
         return jsonify({"error": str(e)}), 500
+    
+# ----------------------------------------------------------------
+# --- ✨ 신규: 해설 강의 랜딩 페이지 API ---
+# ----------------------------------------------------------------
+@app.route('/view_solution/<submission_id>')
+def view_solution(submission_id):
+    """학생이 문자로 받은 링크를 클릭했을 때 보여주는 해설강의 페이지"""
+    try:
+        with engine.connect() as conn:
+            # 1. DB에서 과제 제출 정보 조회
+            query = text('''
+                SELECT h."과제명", s."학생이름", s."클래스"
+                FROM homework_logs h
+                JOIN students s ON h."학생ID" = s."학생ID"
+                WHERE h."과제ID" = :sid
+            ''')
+            info = conn.execute(query, {"sid": submission_id}).fetchone()
+            
+            if not info:
+                return "<h1>과제 정보를 찾을 수 없습니다. 정상적으로 제출되었는지 확인해주세요.</h1>", 404
+
+            assignment_name, student_name, class_name = info[0], info[1], info[2]
+            
+            # 2. 캐시에서 과제 스펙(원문번호) 및 링크 매칭
+            current_hw_specs = [hw for hw in GLOBAL_CACHE.get('assignments', []) if str(hw.get('과제명')).strip() == str(assignment_name).strip()]
+            
+            # 문항 번호 순서대로 예쁘게 정렬
+            try:
+                current_hw_specs.sort(key=lambda x: int(x.get('문항번호', 0)))
+            except:
+                pass
+            
+            solution_list = []
+            for spec in current_hw_specs:
+                q_num = str(spec.get('문항번호', '')).strip()
+                original_id = str(spec.get('원문번호', '')).strip()
+                link = GLOBAL_CACHE.get('problem_links', {}).get(original_id, None)
+                
+                if q_num: # 빈 줄 방지
+                    solution_list.append({
+                        "no": q_num,
+                        "original_id": original_id,
+                        "link": link
+                    })
+
+        # 3. HTML 렌더링 (아직 HTML 파일이 없다면 이 단계에서 에러가 날 수 있습니다)
+        return render_template('solution_page.html', 
+                               student_name=student_name, 
+                               class_name=class_name,
+                               hw_name=assignment_name, 
+                               solutions=solution_list)
+                               
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return f"<h1>페이지를 불러오는 중 오류가 발생했습니다.</h1>", 500
 
 # ----------------------------------------------------------------
 # --- 🚀 핵심 3: 채점 대시보드 (Read 최적화) ---
