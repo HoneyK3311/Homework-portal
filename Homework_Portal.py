@@ -290,13 +290,12 @@ def handle_tally_webhook():
                     # 1. 렌더 원본 주소 생성
                     base_url = f"{request.host_url}view_solution/{submission_id}"
                     
-                    # 2. ✨ TinyURL 무료 API로 즉석에서 링크 압축 (가입 불필요)
+                    # 2. ✨ is.gd API로 즉석에서 링크 압축 (차단 없는 엔진으로 교체)
                     short_url = base_url
                     try:
-                        # 3초 안에 응답이 오면 압축된 URL(예: https://tinyurl.com/y2x...)을 사용
-                        response = requests.get(f"http://tinyurl.com/api-create.php?url={base_url}", timeout=3)
+                        response = requests.get(f"https://is.gd/create.php?format=simple&url={base_url}", timeout=3)
                         if response.status_code == 200:
-                            short_url = response.text
+                            short_url = response.text.strip()
                     except Exception as e:
                         print(f"⚠️ 링크 압축 실패 (원본 사용): {e}")
 
@@ -324,7 +323,7 @@ def handle_tally_webhook():
         return jsonify({"error": str(e)}), 500
     
 # ----------------------------------------------------------------
-# --- 해설 강의 랜딩 페이지 (정밀 로그 장착 버전) ---
+# --- 해설 강의 랜딩 페이지 (3중 필터 완벽 일치 & 중복 방어) ---
 # ----------------------------------------------------------------
 @app.route('/view_solution/<submission_id>')
 def view_solution(submission_id):
@@ -343,19 +342,15 @@ def view_solution(submission_id):
             st_class = str(class_name).strip()
             st_level = str(db_level).strip() if db_level else str(GLOBAL_CACHE['student_levels'].get(f"{student_name}_{st_class}", "")).strip()
 
-            # 🚨 Render 로그에서 이 내용을 확인해야 합니다!
-            print(f"🕵️ [Web] 학생:{student_name} | 클래스:'{st_class}' | 레벨:'{st_level}' | 과제:'{assignment_name}'")
-
             current_hw_specs = []
             for hw in GLOBAL_CACHE.get('assignments', []):
-                # 시트 데이터 (Key에 공백이 있을 수 있으니 주의)
                 h_name = str(hw.get('과제명', '')).strip()
                 h_class = str(hw.get('클래스', '')).strip()
                 h_level = str(hw.get('레벨', '')).strip()
                 
-                if h_name == str(assignment_name).strip():
-                    if h_class == st_class and h_level == st_level:
-                        current_hw_specs.append(hw)
+                # ✨ 결론 로직: 과제명, 클래스, 레벨 3가지가 한 치의 오차도 없이 100% 똑같을 때만 통과
+                if h_name == str(assignment_name).strip() and h_class == st_class and h_level == st_level:
+                    current_hw_specs.append(hw)
 
             # 중복 제거 (문항번호 기준)
             unique_specs = {}
@@ -364,7 +359,6 @@ def view_solution(submission_id):
                 if q_num: unique_specs[q_num] = spec
             
             filtered_specs = list(unique_specs.values())
-            print(f"🕵️ [Web] 최종 매칭된 문항 수: {len(filtered_specs)}개")
 
             # 정렬 및 링크 조립
             try:
@@ -380,6 +374,8 @@ def view_solution(submission_id):
         return render_template('solution_page.html', student_name=student_name, class_name=st_class, 
                                hw_name=assignment_name, student_level=st_level, solutions=solution_list)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return f"오류 발생: {str(e)}", 500
 
 # ----------------------------------------------------------------
