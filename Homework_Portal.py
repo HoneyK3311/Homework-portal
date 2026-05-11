@@ -51,8 +51,6 @@ SENDER_PHONE_NUMBER = "01098159412"
 # --- 교직원 계정 설정 ---
 STAFF_CREDENTIALS = {
     "kr308": ["!!djqkdntflsdk", "admin"],
-    "윤지희": ["04094517", "teacher"],
-    "박하린": ["24275057", "teacher"],
     "윤하연": ["53077146", "teacher"]
 }
 
@@ -301,17 +299,26 @@ def handle_tally_webhook():
                     clean_phone = '0' + clean_phone
                     
                 if clean_phone.startswith('010') and len(clean_phone) >= 10:
-                    # ✨ [수정됨] 해설 페이지 링크가 포함된 문자로 변경
-                    # request.host_url을 쓰면 렌더의 현재 도메인 주소를 알아서 가져옵니다.
-                    solution_url = f"{request.host_url}view_solution/{submission_id}"
+                    # 1. 렌더 원본 주소 생성
+                    base_url = f"{request.host_url}view_solution/{submission_id}"
                     
+                    # 2. ✨ TinyURL 무료 API로 즉석에서 링크 압축 (가입 불필요)
+                    short_url = base_url
+                    try:
+                        # 3초 안에 응답이 오면 압축된 URL(예: https://tinyurl.com/y2x...)을 사용
+                        response = requests.get(f"http://tinyurl.com/api-create.php?url={base_url}", timeout=3)
+                        if response.status_code == 200:
+                            short_url = response.text
+                    except Exception as e:
+                        print(f"⚠️ 링크 압축 실패 (원본 사용): {e}")
+
+                    # 3. ✨ 초압축 단문 템플릿 (이모지 제거, 띄어쓰기 최소화, 90바이트 안전선 확보)
                     sms_msg = (
                         f"[김한이수학]\n"
-                        f"[{class_name}] {student_name} 학생\n"
-                        f"'{assignment_name}' 제출 완료!\n\n"
-                        f"👇문항별 해설강의 확인하기\n"
-                        f"{solution_url}"
+                        f"{student_name}님 {assignment_name} 제출완료\n"
+                        f"해설: {short_url}"
                     )
+                    
                     send_sms_aligo(clean_phone, sms_msg)
                 else:
                     print(f"⚠️ {student_name} 학생 번호 형식 오류로 제출확인 문자 발송 실패: {clean_phone}")
@@ -329,16 +336,16 @@ def handle_tally_webhook():
         return jsonify({"error": str(e)}), 500
     
 # ----------------------------------------------------------------
-# --- ✨ 신규: 해설 강의 랜딩 페이지 API ---
+# --- ✨ 신규: 해설 강의 랜딩 페이지 API (클래스+레벨 3중 필터 & 중복 방어) ---
 # ----------------------------------------------------------------
 @app.route('/view_solution/<submission_id>')
 def view_solution(submission_id):
     """학생이 문자로 받은 링크를 클릭했을 때 보여주는 해설강의 페이지"""
     try:
         with engine.connect() as conn:
-            # 1. DB에서 과제 제출 정보 조회
+            # 1. DB에서 과제 제출 정보(과제명, 이름, 클래스, 레벨) 조회
             query = text('''
-                SELECT h."과제명", s."학생이름", s."클래스"
+                SELECT h."과제명", s."학생이름", s."클래스", s."level"
                 FROM homework_logs h
                 JOIN students s ON h."학생ID" = s."학생ID"
                 WHERE h."과제ID" = :sid
@@ -348,35 +355,63 @@ def view_solution(submission_id):
             if not info:
                 return "<h1>과제 정보를 찾을 수 없습니다. 정상적으로 제출되었는지 확인해주세요.</h1>", 404
 
-            assignment_name, student_name, class_name = info[0], info[1], info[2]
+            assignment_name, student_name, class_name, db_level = info[0], info[1], info[2], info[3]
             
-            # 2. 캐시에서 과제 스펙(원문번호) 및 링크 매칭
-            current_hw_specs = [hw for hw in GLOBAL_CACHE.get('assignments', []) if str(hw.get('과제명')).strip() == str(assignment_name).strip()]
+            # 비교를 위한 문자열 정리
+            student_class = str(class_name).strip()
+            student_level = str(db_level).strip() if db_level else str(GLOBAL_CACHE['student_levels'].get(f"{student_name}_{class_name}", "")).strip()
+
+            # 2. 캐시에서 과제 스펙 매칭 (✨과제명 + 클래스 + 레벨 3중 동시 필터링)
+            current_hw_specs = []
+            for hw in GLOBAL_CACHE.get('assignments', []):
+                hw_name_val = str(hw.get('과제명', '')).strip()
+                hw_level_val = str(hw.get('레벨', hw.get('Level', ''))).strip()
+                hw_class_val = str(hw.get('클래스', hw.get('대상클래스', ''))).strip()
+                
+                # 과제명이 일치할 때
+                if hw_name_val == str(assignment_name).strip():
+                    # 학생 레벨 정보가 있을 때 3중 매칭 (클래스 + 레벨 모두 일치)
+                    if student_level:
+                        if hw_class_val == student_class and hw_level_val == student_level:
+                            current_hw_specs.append(hw)
+                    # 만약 학생 레벨 정보가 없다면, 클래스만 일치하는 레벨 없는 공통 문항 탐색
+                    else:
+                        if hw_class_val == student_class and hw_level_val == "":
+                            current_hw_specs.append(hw)
+
+            # 3. 만약을 대비한 문항 번호 기준 '중복 제거' 안전장치
+            unique_specs = {}
+            for spec in current_hw_specs:
+                q_num = str(spec.get('문항번호', '')).strip()
+                if q_num:
+                    unique_specs[q_num] = spec
             
-            # 문항 번호 순서대로 예쁘게 정렬
+            filtered_hw_specs = list(unique_specs.values())
+
+            # 4. 문항 번호 오름차순 정렬
             try:
-                current_hw_specs.sort(key=lambda x: int(x.get('문항번호', 0)))
+                filtered_hw_specs.sort(key=lambda x: str(x.get('문항번호', '')))
             except:
                 pass
             
+            # 5. 해설 링크 매칭
             solution_list = []
-            for spec in current_hw_specs:
+            for spec in filtered_hw_specs:
                 q_num = str(spec.get('문항번호', '')).strip()
                 original_id = str(spec.get('원문번호', '')).strip()
                 link = GLOBAL_CACHE.get('problem_links', {}).get(original_id, None)
                 
-                if q_num: # 빈 줄 방지
-                    solution_list.append({
-                        "no": q_num,
-                        "original_id": original_id,
-                        "link": link
-                    })
+                solution_list.append({
+                    "no": q_num,
+                    "original_id": original_id,
+                    "link": link
+                })
 
-        # 3. HTML 렌더링 (아직 HTML 파일이 없다면 이 단계에서 에러가 날 수 있습니다)
         return render_template('solution_page.html', 
                                student_name=student_name, 
-                               class_name=class_name,
-                               hw_name=assignment_name, 
+                               class_name=student_class,
+                               hw_name=assignment_name,
+                               student_level=student_level, 
                                solutions=solution_list)
                                
     except Exception as e:

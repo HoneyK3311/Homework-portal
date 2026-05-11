@@ -6,15 +6,15 @@ DB_URI = os.getenv("DATABASE_URL", "postgresql://student_db_cgwz_user:hj1xqwey7V
 engine = create_engine(DB_URI)
 
 def check_strict_students():
-    print("🔍 [정밀 진단] '2603' 시즌 + '등록중' + '33정규' 학생 추출\n")
+    print("🔍 [정밀 진단] '2605' 시즌 + '등록중' + '335정규' 학생 추출\n")
     
     with engine.connect() as conn:
         # ✨ 핵심: 3가지 엄격한 조건을 모두 만족하는 학생만 쏙 뽑아내는 쿼리
         query = text('''
             SELECT * FROM students 
-            WHERE "시즌" = '2603' 
+            WHERE "시즌" = '2605' 
               AND "현재상태" = '등록중' 
-              AND "클래스" = '33정규'
+              AND "클래스" = '35정규'
         ''')
         result = conn.execute(query)
         
