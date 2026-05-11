@@ -103,22 +103,25 @@ def send_sms_aligo(phone_number, message):
         print(f"🚨 SMS 발송 중 예외 발생: {e}")
 
 # ----------------------------------------------------------------
-# --- 🚀 핵심 1: 로그인 시 1회 메모리 캐싱 (임시코드와 로직 통일) ---
+# --- 🚀 핵심 1: 로그인 시 1회 메모리 캐싱 (expected_headers 정면 돌파) ---
 # ----------------------------------------------------------------
 def refresh_global_cache():
     print("🔄 [서버] 전역 메모리 캐싱 시작...")
     try:
         gc = authenticate_gsheets()
         
-        # 1. 과제 목록 캐싱 (임시 스크립트와 동일하게 get_all_records 사용)
+        # 1. 과제 목록 캐싱 (에러 메시지 권고대로 헤더 직접 지정!)
         source_sheet = gc.open_by_url(SOURCE_SHEET_URL).worksheet("과제목록")
-        # ✨ get_all_records()로 가져와야 컬럼명이 정확하게 매칭됩니다.
-        raw_assignments = source_sheet.get_all_records()
+        hw_headers = ['클래스', '과제명', '레벨', '문항번호', '원문번호', '오답수']
+        raw_assignments = source_sheet.get_all_records(expected_headers=hw_headers)
         GLOBAL_CACHE['assignments'] = raw_assignments
 
-        # 2. 학생 레벨 캐싱
+        # 2. 학생 레벨 캐싱 (마찬가지로 필수 헤더만 타겟팅)
         roster_sheet = gc.open_by_key(STUDENT_DB_ID).worksheet("(통합) 학생DB")
-        roster_data = roster_sheet.get_all_records()
+        # 선생님 시트에 맞게 핵심 컬럼 지정 (Level 대소문자 방어 포함)
+        roster_headers = ['학생이름', '클래스', '현재상태', 'Level']
+        roster_data = roster_sheet.get_all_records(expected_headers=roster_headers)
+        
         level_map = {}
         for row in roster_data:
             if str(row.get('현재상태', '')).strip() == '등록중':
@@ -128,13 +131,17 @@ def refresh_global_cache():
 
         # 3. 해설 링크 캐싱
         link_sheet = gc.open_by_key(LINK_SHEET_ID).worksheet("링크")
-        link_data = link_sheet.get_all_records()
+        link_headers = ['문항 ID', '링크']
+        link_data = link_sheet.get_all_records(expected_headers=link_headers)
+        
         link_map = {str(row.get('문항 ID', '')).strip(): str(row.get('링크', '')).strip() for row in link_data}
         GLOBAL_CACHE['problem_links'] = link_map
 
         GLOBAL_CACHE['last_updated'] = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
         print(f"✅ [서버] 캐싱 완료! (과제 {len(raw_assignments)}건, 레벨 {len(level_map)}명)")
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"🚨 [서버] 캐싱 중 치명적 오류: {e}")
 
 # ----------------------------------------------------------------
