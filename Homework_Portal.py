@@ -103,51 +103,39 @@ def send_sms_aligo(phone_number, message):
         print(f"🚨 SMS 발송 중 예외 발생: {e}")
 
 # ----------------------------------------------------------------
-# --- 🚀 핵심 1: 로그인 시 1회 메모리 캐싱 ---
+# --- 🚀 핵심 1: 로그인 시 1회 메모리 캐싱 (임시코드와 로직 통일) ---
 # ----------------------------------------------------------------
 def refresh_global_cache():
-    """스태프 로그인 시 백그라운드에서 구글 시트를 한 번 읽어 캐시를 최신화합니다."""
-    print("🔄 전역 메모리 캐싱 시작... (문항정보 & 레벨)")
+    print("🔄 [서버] 전역 메모리 캐싱 시작...")
     try:
         gc = authenticate_gsheets()
         
-        # ✨ 에러 방지: get_all_records() 대신 튼튼한 get_sheet_as_df() 사용
-        # 1. 과제 목록(문항 정보) 캐싱
-        source_sheet = gc.open_by_url(SOURCE_SHEET_URL)
-        assignments_df = get_sheet_as_df(source_sheet.worksheet("과제목록"))
-        GLOBAL_CACHE['assignments'] = assignments_df.to_dict(orient='records')
+        # 1. 과제 목록 캐싱 (임시 스크립트와 동일하게 get_all_records 사용)
+        source_sheet = gc.open_by_url(SOURCE_SHEET_URL).worksheet("과제목록")
+        # ✨ get_all_records()로 가져와야 컬럼명이 정확하게 매칭됩니다.
+        raw_assignments = source_sheet.get_all_records()
+        GLOBAL_CACHE['assignments'] = raw_assignments
 
         # 2. 학생 레벨 캐싱
-        roster_df = get_sheet_as_df(gc.open_by_key(STUDENT_DB_ID).worksheet("(통합) 학생DB"))
+        roster_sheet = gc.open_by_key(STUDENT_DB_ID).worksheet("(통합) 학생DB")
+        roster_data = roster_sheet.get_all_records()
         level_map = {}
-        
-        for _, row in roster_df.iterrows():
+        for row in roster_data:
             if str(row.get('현재상태', '')).strip() == '등록중':
                 key = f"{row.get('학생이름')}_{row.get('클래스')}"
-                level_map[key] = str(row.get('Level', ''))
-                
+                level_map[key] = str(row.get('Level', row.get('level', ''))).strip()
         GLOBAL_CACHE['student_levels'] = level_map
 
-        # ✨ [신규 추가] 해설 강의 링크 캐싱 시작
-        try:
-            link_sheet = gc.open_by_key(LINK_SHEET_ID).worksheet("링크")
-            link_df = get_sheet_as_df(link_sheet)
-            link_map = {}
-            for _, row in link_df.iterrows():
-                p_id = str(row.get('문항 ID', '')).strip()
-                url = str(row.get('링크', '')).strip()
-                if p_id and url:
-                    link_map[p_id] = url
-            GLOBAL_CACHE['problem_links'] = link_map
-            print(f"✅ 해설 링크 {len(link_map)}건 캐싱 완료!")
-        except Exception as e:
-            print(f"⚠️ 해설 링크 캐싱 실패 (시트 확인 필요): {e}")
-        # ✨ [신규 추가 끝]
+        # 3. 해설 링크 캐싱
+        link_sheet = gc.open_by_key(LINK_SHEET_ID).worksheet("링크")
+        link_data = link_sheet.get_all_records()
+        link_map = {str(row.get('문항 ID', '')).strip(): str(row.get('링크', '')).strip() for row in link_data}
+        GLOBAL_CACHE['problem_links'] = link_map
 
         GLOBAL_CACHE['last_updated'] = datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S')
-        print(f"✅ 메모리 캐싱 완료! (과제 {len(GLOBAL_CACHE['assignments'])}건, 레벨 {len(level_map)}명)")
+        print(f"✅ [서버] 캐싱 완료! (과제 {len(raw_assignments)}건, 레벨 {len(level_map)}명)")
     except Exception as e:
-        print(f"🚨 캐싱 중 오류 발생: {e}")
+        print(f"🚨 [서버] 캐싱 중 치명적 오류: {e}")
 
 # ----------------------------------------------------------------
 # --- 라우팅: 스태프 전용으로 완전 개편 (학생 기능 삭제) ---
@@ -336,14 +324,12 @@ def handle_tally_webhook():
         return jsonify({"error": str(e)}), 500
     
 # ----------------------------------------------------------------
-# --- ✨ 신규: 해설 강의 랜딩 페이지 API (클래스+레벨 3중 필터 & 중복 방어) ---
+# --- 해설 강의 랜딩 페이지 (정밀 로그 장착 버전) ---
 # ----------------------------------------------------------------
 @app.route('/view_solution/<submission_id>')
 def view_solution(submission_id):
-    """학생이 문자로 받은 링크를 클릭했을 때 보여주는 해설강의 페이지"""
     try:
         with engine.connect() as conn:
-            # 1. DB에서 과제 제출 정보(과제명, 이름, 클래스, 레벨) 조회
             query = text('''
                 SELECT h."과제명", s."학생이름", s."클래스", s."level"
                 FROM homework_logs h
@@ -351,73 +337,50 @@ def view_solution(submission_id):
                 WHERE h."과제ID" = :sid
             ''')
             info = conn.execute(query, {"sid": submission_id}).fetchone()
-            
-            if not info:
-                return "<h1>과제 정보를 찾을 수 없습니다. 정상적으로 제출되었는지 확인해주세요.</h1>", 404
+            if not info: return "과제 정보 없음", 404
 
-            assignment_name, student_name, class_name, db_level = info[0], info[1], info[2], info[3]
-            
-            # 비교를 위한 문자열 정리
-            student_class = str(class_name).strip()
-            student_level = str(db_level).strip() if db_level else str(GLOBAL_CACHE['student_levels'].get(f"{student_name}_{class_name}", "")).strip()
+            assignment_name, student_name, class_name, db_level = info
+            st_class = str(class_name).strip()
+            st_level = str(db_level).strip() if db_level else str(GLOBAL_CACHE['student_levels'].get(f"{student_name}_{st_class}", "")).strip()
 
-            # 2. 캐시에서 과제 스펙 매칭 (✨과제명 + 클래스 + 레벨 3중 동시 필터링)
+            # 🚨 Render 로그에서 이 내용을 확인해야 합니다!
+            print(f"🕵️ [Web] 학생:{student_name} | 클래스:'{st_class}' | 레벨:'{st_level}' | 과제:'{assignment_name}'")
+
             current_hw_specs = []
             for hw in GLOBAL_CACHE.get('assignments', []):
-                hw_name_val = str(hw.get('과제명', '')).strip()
-                hw_level_val = str(hw.get('레벨', hw.get('Level', ''))).strip()
-                hw_class_val = str(hw.get('클래스', hw.get('대상클래스', ''))).strip()
+                # 시트 데이터 (Key에 공백이 있을 수 있으니 주의)
+                h_name = str(hw.get('과제명', '')).strip()
+                h_class = str(hw.get('클래스', '')).strip()
+                h_level = str(hw.get('레벨', '')).strip()
                 
-                # 과제명이 일치할 때
-                if hw_name_val == str(assignment_name).strip():
-                    # 학생 레벨 정보가 있을 때 3중 매칭 (클래스 + 레벨 모두 일치)
-                    if student_level:
-                        if hw_class_val == student_class and hw_level_val == student_level:
-                            current_hw_specs.append(hw)
-                    # 만약 학생 레벨 정보가 없다면, 클래스만 일치하는 레벨 없는 공통 문항 탐색
-                    else:
-                        if hw_class_val == student_class and hw_level_val == "":
-                            current_hw_specs.append(hw)
+                if h_name == str(assignment_name).strip():
+                    if h_class == st_class and h_level == st_level:
+                        current_hw_specs.append(hw)
 
-            # 3. 만약을 대비한 문항 번호 기준 '중복 제거' 안전장치
+            # 중복 제거 (문항번호 기준)
             unique_specs = {}
             for spec in current_hw_specs:
                 q_num = str(spec.get('문항번호', '')).strip()
-                if q_num:
-                    unique_specs[q_num] = spec
+                if q_num: unique_specs[q_num] = spec
             
-            filtered_hw_specs = list(unique_specs.values())
+            filtered_specs = list(unique_specs.values())
+            print(f"🕵️ [Web] 최종 매칭된 문항 수: {len(filtered_specs)}개")
 
-            # 4. 문항 번호 오름차순 정렬
+            # 정렬 및 링크 조립
             try:
-                filtered_hw_specs.sort(key=lambda x: str(x.get('문항번호', '')))
-            except:
-                pass
+                filtered_specs.sort(key=lambda x: str(x.get('문항번호', '')))
+            except: pass
             
-            # 5. 해설 링크 매칭
             solution_list = []
-            for spec in filtered_hw_specs:
+            for spec in filtered_specs:
                 q_num = str(spec.get('문항번호', '')).strip()
-                original_id = str(spec.get('원문번호', '')).strip()
-                link = GLOBAL_CACHE.get('problem_links', {}).get(original_id, None)
-                
-                solution_list.append({
-                    "no": q_num,
-                    "original_id": original_id,
-                    "link": link
-                })
+                o_id = str(spec.get('원문번호', '')).strip()
+                solution_list.append({"no": q_num, "original_id": o_id, "link": GLOBAL_CACHE['problem_links'].get(o_id)})
 
-        return render_template('solution_page.html', 
-                               student_name=student_name, 
-                               class_name=student_class,
-                               hw_name=assignment_name,
-                               student_level=student_level, 
-                               solutions=solution_list)
-                               
+        return render_template('solution_page.html', student_name=student_name, class_name=st_class, 
+                               hw_name=assignment_name, student_level=st_level, solutions=solution_list)
     except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return f"<h1>페이지를 불러오는 중 오류가 발생했습니다.</h1>", 500
+        return f"오류 발생: {str(e)}", 500
 
 # ----------------------------------------------------------------
 # --- 🚀 핵심 3: 채점 대시보드 (Read 최적화) ---
