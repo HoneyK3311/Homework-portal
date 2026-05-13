@@ -254,12 +254,12 @@ def handle_tally_webhook():
 
             # 🎯 선생님의 7대 기준 적용: 이름, 클래스, 현재상태='등록중', 시즌 일치하는 진짜 학생 찾기
             st_query = text('''
-                SELECT "학생ID", "학생연락처" 
-                FROM students 
+                SELECT "학생ID", student_phone 
+                FROM students_master 
                 WHERE "학생이름" = :name 
-                  AND "클래스" = :cls 
-                  AND "현재상태" = '등록중' 
-                  AND "시즌" = :season
+                  AND class_name = :cls 
+                  AND status = '등록중' 
+                  AND season = :season
             ''')
             st_result = conn.execute(st_query, {"name": student_name, "cls": class_name, "season": season_name}).fetchone()
             
@@ -337,9 +337,9 @@ def view_solution(submission_id):
     try:
         with engine.connect() as conn:
             query = text('''
-                SELECT h."과제명", s."학생이름", s."클래스", s."level"
+                SELECT h."과제명", s."학생이름", s.class_name, s.level
                 FROM homework_logs h
-                JOIN students s ON h."학생ID" = s."학생ID"
+                JOIN students_master s ON h."학생ID" = s."학생ID"
                 WHERE h."과제ID" = :sid
             ''')
             info = conn.execute(query, {"sid": submission_id}).fetchone()
@@ -406,9 +406,9 @@ def get_data():
 
             # 🎯 요구사항 3: 반려된 과제도 이번 시즌이면 무조건 불러옵니다! (WHERE 절에서 '반려 제외' 조건 삭제)
             query = text('''
-                SELECT h."과제ID", h."제출일시", s."학생이름", s."클래스", h."과제명", h."제출상태", h."교사확인상태", s."level", h.image_url
+                SELECT h."과제ID", h."제출일시", s."학생이름", s.class_name, h."과제명", h."제출상태", h."교사확인상태", s.level, h.image_url
                 FROM homework_logs h
-                JOIN students s ON h."학생ID" = s."학생ID"
+                JOIN students_master s ON h."학생ID" = s."학생ID"
                 WHERE h."시즌" = :season 
                 ORDER BY h."제출일시" DESC
             ''')
@@ -476,7 +476,7 @@ def update_status():
         # --- 1. DB 다이렉트 업데이트 (화면 즉시 반영 & 파이프라인 부담 해소) ---
         with engine.begin() as conn:
             # 먼저 학생 ID 조회
-            st_query = text('SELECT "학생ID" FROM students WHERE "학생이름"=:n AND "클래스"=:c')
+            st_query = text('SELECT "학생ID" FROM students_master WHERE "학생이름"=:n AND class_name=:c')
             student_id_val = conn.execute(st_query, {"n": student_name, "c": student_class}).scalar()
 
             update_query = text('''
@@ -518,7 +518,7 @@ def update_status():
             # ✨ [신규 복구] 반려 문자도 무적의 '7대 기준'과 '번호 필터링' 적용!
             with engine.connect() as conn:
                 # 영어 유령 컬럼 대신, 찐 데이터인 "학생연락처"를 꺼내옵니다.
-                phone_query = text('SELECT "학생연락처" FROM students WHERE "학생ID"=:id')
+                phone_query = text('SELECT student_phone FROM students_master WHERE "학생ID"=:id')
                 raw_phone = conn.execute(phone_query, {"id": student_id_val}).scalar()
                 
                 if raw_phone:
@@ -596,7 +596,7 @@ def get_admin_dashboard_data():
             current_season = conn.execute(season_query).scalar() or "미분류"
 
             # 2. Pandas 읽기 (SQLAlchemy 2.0 지원을 위해 conn 객체 직접 전달)
-            roster_df = pd.read_sql(text('SELECT "학생이름", "클래스" FROM students WHERE "현재상태" = \'등록중\''), conn)
+            roster_df = pd.read_sql(text('SELECT "학생이름", class_name as "클래스" FROM students_master WHERE status = \'등록중\''), conn)
             
             # 3. ✨ 과거 시즌 데이터 방어막 적용! (현재 시즌의 제출 현황만 쏙 뽑아옵니다)
             sub_query = text(f'''
@@ -774,12 +774,12 @@ def run_worker():
 
                         # 🎯 선생님의 7대 기준 적용: 퇴원생 걸러내고, 진짜 "학생연락처"만 가져옵니다!
                         st_query = text('''
-                            SELECT "학생연락처" 
-                            FROM students 
+                            SELECT student_phone 
+                            FROM students_master 
                             WHERE "학생이름" = :n 
-                              AND "클래스" = :c 
-                              AND "현재상태" = '등록중' 
-                              AND "시즌" = :season
+                              AND class_name = :c 
+                              AND status = '등록중' 
+                              AND season = :season
                         ''')
                         raw_phone = conn.execute(st_query, {"n": student_name, "c": class_name, "season": current_season_name}).scalar()
 
