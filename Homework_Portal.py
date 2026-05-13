@@ -336,8 +336,9 @@ def handle_tally_webhook():
 def view_solution(submission_id):
     try:
         with engine.connect() as conn:
+            # 1. 제출 로그에서 학생 정보 획득
             query = text('''
-                SELECT h."과제명", s."학생이름", s.class_name, s.level
+                SELECT h."과제명", s."학생이름", s.class_name, s.level, h."시즌"
                 FROM homework_logs h
                 JOIN students_master s ON h."학생ID" = s."학생ID"
                 WHERE h."과제ID" = :sid
@@ -345,38 +346,54 @@ def view_solution(submission_id):
             info = conn.execute(query, {"sid": submission_id}).fetchone()
             if not info: return "과제 정보 없음", 404
 
-            assignment_name, student_name, class_name, db_level = info
+            assignment_name, student_name, class_name, db_level, season = info
             st_class = str(class_name).strip()
-            st_level = str(db_level).strip() if db_level else str(GLOBAL_CACHE['student_levels'].get(f"{student_name}_{st_class}", "")).strip()
+            
+            # 🚀 [시트 의존도 0%] DB의 학생 레벨만 순수하게 사용
+            st_level = str(db_level).strip() if db_level else ""
 
-            current_hw_specs = []
-            for hw in GLOBAL_CACHE.get('assignments', []):
-                h_name = str(hw.get('과제명', '')).strip()
-                h_class = str(hw.get('클래스', '')).strip()
-                h_level = str(hw.get('레벨', '')).strip()
-                
-                # ✨ 결론 로직: 과제명, 클래스, 레벨 3가지가 한 치의 오차도 없이 100% 똑같을 때만 통과
-                if h_name == str(assignment_name).strip() and h_class == st_class and h_level == st_level:
-                    current_hw_specs.append(hw)
+            # 2. 과제 정의 ID(homework_definitions.id) 찾기
+            def_query = text('''
+                SELECT id FROM homework_definitions
+                WHERE season = :season AND class_name = :cls AND name = :name
+            ''')
+            def_id = conn.execute(def_query, {"season": season, "cls": st_class, "name": assignment_name}).scalar()
 
-            # 중복 제거 (문항번호 기준)
+            if not def_id:
+                return "해당 과제의 문항 마스터 정보가 아직 DB에 등록되지 않았습니다.", 404
+
+            # 3. 🚀 [100% DB화 달성] 문항 리스트(assignment_items)와 해설 링크(problem_bank)를 JOIN하여 한 방에 조회!
+            items_query = text('''
+                SELECT a.problem_num, a.original_id, a.level, p.solution_video_url
+                FROM assignment_items a
+                LEFT JOIN problem_bank p ON a.original_id = p.problem_id
+                WHERE a.homework_def_id = :def_id
+                  AND a.level IN (:level, '공통')
+                ORDER BY a.problem_num ASC
+            ''')
+            items_result = conn.execute(items_query, {"def_id": def_id, "level": st_level}).fetchall()
+            
+            # 중복 방어 및 우선순위 적용 ('공통' 문항과 '특정 레벨' 문항이 번호가 겹치면 특정 레벨 우선)
             unique_specs = {}
-            for spec in current_hw_specs:
-                q_num = str(spec.get('문항번호', '')).strip()
-                if q_num: unique_specs[q_num] = spec
+            for row in items_result:
+                p_num, o_id, p_level, video_url = row
+                if p_num not in unique_specs or p_level != '공통':
+                    unique_specs[p_num] = {
+                        "original_id": o_id,
+                        "link": video_url if video_url else ""
+                    }
             
-            filtered_specs = list(unique_specs.values())
-
-            # 정렬 및 링크 조립
-            try:
-                filtered_specs.sort(key=lambda x: str(x.get('문항번호', '')))
-            except: pass
-            
+            # 번호 순서대로 정렬하여 화면용 데이터 조립
+            sorted_nums = sorted(unique_specs.keys())
             solution_list = []
-            for spec in filtered_specs:
-                q_num = str(spec.get('문항번호', '')).strip()
-                o_id = str(spec.get('원문번호', '')).strip()
-                solution_list.append({"no": q_num, "original_id": o_id, "link": GLOBAL_CACHE['problem_links'].get(o_id)})
+            
+            for num in sorted_nums:
+                data = unique_specs[num]
+                solution_list.append({
+                    "no": num, 
+                    "original_id": data["original_id"], 
+                    "link": data["link"]
+                })
 
         return render_template('solution_page.html', student_name=student_name, class_name=st_class, 
                                hw_name=assignment_name, student_level=st_level, solutions=solution_list)
