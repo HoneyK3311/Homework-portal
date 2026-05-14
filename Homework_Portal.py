@@ -182,7 +182,7 @@ def staff_logout():
     return redirect(url_for('staff_login_page'))
 
 # ----------------------------------------------------------------
-# --- 🚀 핵심 2: 탈리 웹훅(Webhook) 수신 (7대 기준 & 무적 파서 적용) ---
+# --- 🚀 핵심 2: 무적 웹훅 V2 (폼 ID 기반 절대 시즌 확정 & 중복 방어) ---
 # ----------------------------------------------------------------
 @app.route('/webhook/tally', methods=['POST'])
 def handle_tally_webhook():
@@ -194,11 +194,12 @@ def handle_tally_webhook():
         data = payload.get('data', {})
         submission_id = data.get('submissionId', 'unknown_id')
         created_at = data.get('createdAt')
+        form_id = data.get('formId', '') # 🌟 탈리 폼 ID 추출
         
         fields_data = data.get('fields', [])
         parsed_fields = {}
         
-        # ✨ 스마트 & 무적 파서
+        # ✨ 스마트 & 무적 파서 (기존 로직 유지)
         for f in fields_data:
             label = f.get('label', '')
             field_type = f.get('type', '')
@@ -248,11 +249,19 @@ def handle_tally_webhook():
             except Exception:
                 pass
 
-            # 시즌 정보 먼저 가져오기
-            season_query = text("SELECT 마지막동기화시간 FROM sync_status WHERE 작업이름 = 'current_season'")
-            season_name = conn.execute(season_query).scalar() or "미분류"
+            # 🎯 [V2 핵심 1] 폼 ID를 통한 절대 시즌 확정 (추측 로직 완전 폐기)
+            season_query = text('SELECT name FROM seasons WHERE tally_form_id = :fid')
+            season_name = conn.execute(season_query, {"fid": form_id}).scalar()
+            if not season_name:
+                season_name = "미분류" # DB에 폼 ID가 없는 경우 안전망
+                
+            # 🎯 [V2 핵심 2] 중복 저장 완벽 차단 (1차 방어막)
+            check_dup = text('SELECT "과제ID" FROM homework_logs WHERE "과제ID" = :sub_id')
+            if conn.execute(check_dup, {"sub_id": submission_id}).fetchone():
+                print(f"♻️ [중복 방어] 이미 저장된 과제입니다 (ID: {submission_id}). 패스합니다.")
+                return jsonify({"status": "success", "message": "Ignored duplicate"}), 200
 
-            # 🎯 선생님의 7대 기준 적용: 이름, 클래스, 현재상태='등록중', 시즌 일치하는 진짜 학생 찾기
+            # 🎯 [V2 핵심 3] 시즌 일치하는 진짜 학생 찾기
             st_query = text('''
                 SELECT "학생ID", student_phone 
                 FROM students_master 
@@ -263,27 +272,31 @@ def handle_tally_webhook():
             ''')
             st_result = conn.execute(st_query, {"name": student_name, "cls": class_name, "season": season_name}).fetchone()
             
-            student_id = st_result[0] if st_result else None
-            raw_phone = st_result[1] if st_result else None
-
-            if not student_id:
-                msg = f"⚠️ <b>[미등록 학생 제출]</b>\n{class_name} {student_name}\n등록중인 재원생이 아닙니다. (또는 DB 누락)"
+            if st_result:
+                student_id = st_result[0]
+                raw_phone = st_result[1]
+            else:
+                # 🎯 [V2 핵심 4] 미매칭 데이터 드랍 방지 및 임시 ID 발급
+                student_id = f"미매칭_{class_name}_{student_name}"
+                raw_phone = None
+                msg = f"⚠️ <b>[미매칭 학생 과제 제출]</b>\n{class_name} {student_name}\n과제: {assignment_name}\n시즌: {season_name}\nDB에 등록된 재원생이 아닙니다. (임시 저장됨)"
                 send_telegram_message(TELEGRAM_CHAT_ID, msg)
-                return jsonify({"status": "student_not_found"}), 200
 
-            # 1. 과제 제출 내역 DB 저장
-            log_id = f"HW-{datetime.now(KST).strftime('%f')}-{student_id}"
+            # 1. 과제 제출 내역 DB 저장 
+            log_id = f"HW-{datetime.now(KST).strftime('%f')}-{student_id[-6:]}"
+            
+            # 🎯 '교사확인상태'에 '미확인' 도장 하드코딩 부착!
             insert_query = text('''
                 INSERT INTO homework_logs 
                 ("로그ID", "학생ID", "과제ID", "과제명", "시즌", "제출일시", "제출상태", "교사확인상태", "점수", "오답문항", image_url) 
-                VALUES (:log_id, :st_id, :hw_id, :name, :season, :sub_at, :sub_status, :t_status, '', '', :img)
+                VALUES (:log_id, :st_id, :hw_id, :name, :season, :sub_at, '정상제출', '미확인', '', '', :img)
             ''')
             conn.execute(insert_query, {
                 "log_id": log_id, "st_id": student_id, "hw_id": submission_id, "name": assignment_name,
-                "season": season_name, "sub_at": created_at, "sub_status": "정상제출", "t_status": "미확인", "img": image_url
+                "season": season_name, "sub_at": created_at, "img": image_url
             })
 
-            # 2. 학생에게 "제출 완료" SMS 발송 (7대 기준에서 가져온 찐 번호 사용)
+            # 2. 학생에게 "제출 완료" SMS 발송 (기존 렌더 해설 링크 및 is.gd 압축 로직 유지)
             if raw_phone:
                 phone_str = str(raw_phone).strip()
                 if phone_str.endswith('.0'): phone_str = phone_str[:-2]
@@ -294,10 +307,7 @@ def handle_tally_webhook():
                     clean_phone = '0' + clean_phone
                     
                 if clean_phone.startswith('010') and len(clean_phone) >= 10:
-                    # 1. 렌더 원본 주소 생성
                     base_url = f"{request.host_url}view_solution/{submission_id}"
-                    
-                    # 2. ✨ is.gd API로 즉석에서 링크 압축 (차단 없는 엔진으로 교체)
                     short_url = base_url
                     try:
                         response = requests.get(f"https://is.gd/create.php?format=simple&url={base_url}", timeout=3)
@@ -306,19 +316,17 @@ def handle_tally_webhook():
                     except Exception as e:
                         print(f"⚠️ 링크 압축 실패 (원본 사용): {e}")
 
-                    # 3. ✨ 초압축 단문 템플릿 (이모지 제거, 띄어쓰기 최소화, 90바이트 안전선 확보)
                     sms_msg = (
                         f"[김한이수학]\n"
                         f"{student_name}님 {assignment_name} 제출완료\n"
                         f"해설: {short_url}"
                     )
-                    
                     send_sms_aligo(clean_phone, sms_msg)
                 else:
                     print(f"⚠️ {student_name} 학생 번호 형식 오류로 제출확인 문자 발송 실패: {clean_phone}")
         
-        # 선생님께 텔레그램 알림 발송
-        msg = f"📩 <b>[새 과제 도착]</b>\n{class_name} {student_name}\n과제명: {assignment_name}"
+        # 선생님께 텔레그램 정상 알림 발송
+        msg = f"📩 <b>[새 과제 도착]</b>\n{class_name} {student_name}\n과제명: {assignment_name}\n시즌: {season_name}"
         send_telegram_message(TELEGRAM_CHAT_ID, msg)
         
         return jsonify({"status": "success"}), 200
