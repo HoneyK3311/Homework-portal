@@ -354,8 +354,8 @@ def view_solution(submission_id):
 
             # 2. 과제 정의 ID(homework_definitions.id) 찾기
             def_query = text('''
-                SELECT id FROM homework_definitions
-                WHERE season = :season AND class_name = :cls AND name = :name
+                SELECT "과제ID" FROM homework_definitions
+                WHERE "시즌" = :season AND "클래스" = :cls AND "과제명" = :name
             ''')
             def_id = conn.execute(def_query, {"season": season, "cls": st_class, "name": assignment_name}).scalar()
 
